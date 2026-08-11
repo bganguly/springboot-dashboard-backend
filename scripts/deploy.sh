@@ -64,7 +64,7 @@ except Exception:
 " 2>/dev/null || echo "cr")
   printf '\n  Backend runtime:\n'
   printf '  [1] Cloud Run — serverless, scales to zero\n'
-  printf '  [2] GKE       — Kubernetes on e2-standard-2 node (~$22/mo scheduled)\n'
+  printf '  [2] GKE       — Kubernetes on e2-standard-2 node (~$22/mo)\n'
   if [[ "$_EXISTING_RUNTIME" == "gke" ]]; then
     printf '\nChoice [1/2, default 2 — gke (current)]: '
   else
@@ -82,11 +82,11 @@ if [[ "$_TARGET" == "remote" ]]; then
   if [[ "$DEPLOY_MODE" == "lite" ]]; then
     printf '\n--- Lite GCP summary ---\n'
     if [[ "$BACKEND_RUNTIME" == "gke" ]]; then
-      printf '  Backend:    GKE (e2-standard-2 node, scheduled 8am-5pm weekdays)\n'
+      printf '  Backend:    GKE (e2-standard-2 node, always-on)\n'
       printf '  DB:         e2-standard-2 Postgres 16 VM (2 vCPU, 8 GB), 20 GB SSD\n'
-      printf '  Cost est:   ~$30/mo scheduled (~$66/mo if left running)\n'
+      printf '  Cost est:   ~$66/mo\n'
     else
-      printf '  Backend:    Cloud Run · min=1 8am-5pm PST weekdays; min=0 off-hours (cold start ~5s on first request)\n'
+      printf '  Backend:    Cloud Run · scale-to-zero (cold start ~5s on first request)\n'
       printf '  DB:         e2-standard-2 Postgres 16 VM (2 vCPU, 8 GB), 20 GB SSD (always-on)\n'
       printf '  Cost est:   ~$17/mo GCP · ~$10/mo NextJS AWS (scheduled) · ~$27/mo combined\n'
     fi
@@ -1074,13 +1074,6 @@ PYEOF
 printf '\nRemember to tear down when finished:\n'
 printf '  ./scripts/infra-down.sh\n'
 
-if [[ "$_TARGET" == "remote" && -n "$DEPLOY_MODE" ]]; then
-  _SET_LIVE="$(cd "$ROOT_DIR/../../portfolio/scripts" 2>/dev/null && pwd || true)/set-live-url.sh"
-  if [[ -f "$_SET_LIVE" ]]; then
-    printf '\nMarking dashboard backend live in portfolio...\n'
-    bash "$_SET_LIVE" --backend-only --tier "$DEPLOY_MODE" dashboard
-  fi
-fi
 
 FRONTEND_DEPLOY="$(cd "$ROOT_DIR/../dashboard-frontend-gcp/scripts" 2>/dev/null && pwd || true)/deploy.sh"
 if [[ -f "$FRONTEND_DEPLOY" ]]; then
@@ -1189,20 +1182,3 @@ if [[ "$_TARGET" == "remote" ]]; then
 
 fi
 
-if [[ "$_TARGET" == "remote" && "$BACKEND_RUNTIME" == "gke" ]]; then
-  _HOUR_PST=$(TZ="America/Los_Angeles" date +%H)
-  _DOW_PST=$(TZ="America/Los_Angeles" date +%u)
-  _OUTSIDE_HOURS=0
-  (( 10#$_HOUR_PST < 8 || 10#$_HOUR_PST >= 17 )) && _OUTSIDE_HOURS=1
-  (( _DOW_PST >= 6 )) && _OUTSIDE_HOURS=1
-  if (( _OUTSIDE_HOURS )); then
-    printf '\n=== outside working hours — scaling GKE nodes to 0 ===\n'
-    printf '  Scheduler will restart nodes at next 8am PST weekday.\n'
-    gcloud container clusters resize "${DEPLOY_MODE_PREFIX}-cluster" \
-      --node-pool default-pool --num-nodes 0 \
-      --zone "${GCP_REGION}-a" --project "$GCP_PROJECT" --quiet
-    printf '  Nodes stopped — app unreachable until next 8am PST.\n'
-  else
-    printf '\n  GKE nodes active — scheduler will stop them at 5pm PST.\n'
-  fi
-fi
