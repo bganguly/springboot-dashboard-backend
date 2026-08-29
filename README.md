@@ -15,7 +15,7 @@ container images stored in Artifact Registry (analogous to ECR + ECS/EKS in AWS 
 
 ---
 
-| | |
+| Component | Implementation |
 |---|---|
 | **Java / Spring Boot back-end** | Spring Boot 4, Java 21, NamedParameterJdbcTemplate, Flyway |
 | **PostgreSQL — SQL, DML/DDL, performance tuning** | GCE VM Postgres 16; Flyway DDL migrations; GIN index; pre-aggregated summary tables for sub-second chart queries on 4 M rows |
@@ -112,7 +112,35 @@ curl "$BASE/api/orders?page=1&size=3" | jq .total
 
 ---
 
-## Architecture / Topology
+## Architecture
+
+### Search & chart request flow — step by step
+
+1. **Browser → Nginx frontend** — the React UI sends `GET /api/orders?q=sara` to the Cloud Run frontend service (Nginx on port 80), which proxies the `/api/*` path upstream to the Spring Boot backend over HTTPS with SNI.
+2. **Spring Boot → GIN search** — Spring Boot issues `SELECT * FROM orders WHERE search_text ILIKE '%sara%'` against the GCE Postgres VM; the GIN index on the denormalized `search_text` column (name + notes + total + id + status + region + date) returns sub-second results across 4 M rows without a sequential scan.
+3. **Chart path** — `GET /api/aggregates` is served entirely from pre-aggregated `daily_summary` and related rollup tables; Spring Boot never touches raw `orders` on the chart path.
+4. **Secret injection** — Spring Boot reads `DATABASE_URL` from GCP Secret Manager at container start via `secretKeyRef`; no credentials are stored in the image or env files.
+5. **Results → browser** — Spring Boot returns paginated JSON; the React frontend renders the orders table and Recharts chart.
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant FE as Cloud Run Frontend (Nginx)
+    participant SB as Spring Boot (Cloud Run / GKE)
+    participant PG as GCE Postgres 16
+
+    B->>FE: GET /api/orders?q=sara
+    FE->>SB: proxy (HTTPS + SNI)
+    SB->>PG: SELECT * FROM orders WHERE search_text ILIKE '%sara%' (GIN index)
+    PG-->>B: paginated orders
+
+    B->>FE: GET /api/aggregates
+    FE->>SB: proxy
+    SB->>PG: SELECT from daily_summary (pre-agg tables)
+    PG-->>B: chart data
+```
+
+### Topology
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
