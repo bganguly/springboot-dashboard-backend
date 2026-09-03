@@ -5,7 +5,7 @@ Production-grade **Java 21 / Spring Boot 4** REST API delivering sub-second resp
 and declarative Pulumi IaC on GCP. Supports both Cloud Run and GKE as backend runtimes with
 container images stored in Artifact Registry (analogous to ECR + ECS/EKS in AWS deployments).
 
-**[→ Portfolio demo](https://bganguly.github.io/?open=dashboard)**
+**[→ Portfolio demo](https://bganguly.github.io/#orders_dashboard)**
 
 ## Using the App
 
