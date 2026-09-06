@@ -31,25 +31,6 @@ Open **`/explorer.html`** on the running backend to run live requests against ev
 
 ---
 
-## Stack
-
-| Component | Implementation |
-|---|---|
-| **Java / Spring Boot back-end** | Spring Boot 4, Java 21, NamedParameterJdbcTemplate, Flyway |
-| **PostgreSQL — SQL, DML/DDL, performance tuning** | GCE VM Postgres 16; Flyway DDL migrations; GIN index; pre-aggregated summary tables for sub-second chart queries on 4 M rows |
-| **Serverless / cloud-native computing** | Cloud Run (default) or GKE — images in Artifact Registry; min-instances: 0, scales to zero, Direct VPC Egress to private Postgres; toggled via `BACKEND_RUNTIME` |
-| **IaC (Terraform equivalent)** | Pulumi TypeScript (`infra/index.ts`) — VPC, GCE Postgres VM, Cloud Run service, IAM, Secret Manager, Artifact Registry all declared |
-| **CI/CD pipelines** | `deploy.sh` — build → push to Artifact Registry → `pulumi up --yes`; auto bake via ephemeral GCE VM when DB is empty |
-| **Secrets management** | GCP Secret Manager; `DATABASE_URL` injected at runtime via `secretKeyRef`, never stored in image or env file |
-| **Networking, storage, DB architecture** | Private VPC, Direct VPC Egress, GCE VM Postgres on private IP (VPC firewall rules), pg-SSD boot disk |
-| **BFF / integration layer** | Nginx frontend proxies `/api/*` to Cloud Run backend (TLS + SNI); Spring Boot orchestrates REST + DB |
-| **RESTful APIs / microservices** | Two independent Cloud Run services; paginated list endpoint + aggregates endpoint |
-| **Performance optimization** | Sub-second ILIKE search on 4 M rows via GIN index; pre-aggregated daily tables cut chart query time from seconds to milliseconds |
-| **System design diagrams** | See architecture section below |
-
----
-
-
 ## Architecture
 
 ### Search & chart request flow — step by step
@@ -155,18 +136,24 @@ deploy.sh (auto) or scripts/bake-demo-snapshot.sh
 
 ---
 
-## Scale & Performance
+## Stack
 
-> **4 M+ orders** in Cloud SQL PostgreSQL 16 — sub-second full-text search via GIN index on a denormalized `search_text` column; millisecond chart aggregates via pre-aggregated summary tables; zero sequential scans on the hot path.
-
-```
-Browser ──HTTPS──► Nginx / Cloud Run ──proxy /api/* (SNI)──► Spring Boot (CR or GKE) ──VPC──► GCE VM: Postgres 16
-                   dash-frontend                             dash-backend                             dash-pg
-                   0–3 instances                            CR: 0–5 / GKE: 1 pod                    4 M+ rows · GIN index
-                                    ▲─────────────── Pulumi TypeScript IaC ──────────────────────────▲
-```
+| Component | Implementation |
+|---|---|
+| **Java / Spring Boot back-end** | Spring Boot 4, Java 21, NamedParameterJdbcTemplate, Flyway |
+| **PostgreSQL — SQL, DML/DDL, performance tuning** | GCE VM Postgres 16; Flyway DDL migrations; GIN index; pre-aggregated summary tables for sub-second chart queries on 4 M rows |
+| **Serverless / cloud-native computing** | Cloud Run (default) or GKE — images in Artifact Registry; min-instances: 0, scales to zero, Direct VPC Egress to private Postgres; toggled via `BACKEND_RUNTIME` |
+| **IaC (Terraform equivalent)** | Pulumi TypeScript (`infra/index.ts`) — VPC, GCE Postgres VM, Cloud Run service, IAM, Secret Manager, Artifact Registry all declared |
+| **CI/CD pipelines** | `deploy.sh` — build → push to Artifact Registry → `pulumi up --yes`; auto bake via ephemeral GCE VM when DB is empty |
+| **Secrets management** | GCP Secret Manager; `DATABASE_URL` injected at runtime via `secretKeyRef`, never stored in image or env file |
+| **Networking, storage, DB architecture** | Private VPC, Direct VPC Egress, GCE VM Postgres on private IP (VPC firewall rules), pg-SSD boot disk |
+| **BFF / integration layer** | Nginx frontend proxies `/api/*` to Cloud Run backend (TLS + SNI); Spring Boot orchestrates REST + DB |
+| **RESTful APIs / microservices** | Two independent Cloud Run services; paginated list endpoint + aggregates endpoint |
+| **Performance optimization** | Sub-second ILIKE search on 4 M rows via GIN index; pre-aggregated daily tables cut chart query time from seconds to milliseconds |
+| **System design diagrams** | See architecture section below |
 
 ---
+
 
 ## Deployment / Running
 
@@ -209,6 +196,19 @@ Choice [1/2/3/4]:
 ```
 
 One-liners still work: `TIER=lite ./scripts/scale.sh up` / `down`
+
+---
+
+## Scale & Performance
+
+> **4 M+ orders** in Cloud SQL PostgreSQL 16 — sub-second full-text search via GIN index on a denormalized `search_text` column; millisecond chart aggregates via pre-aggregated summary tables; zero sequential scans on the hot path.
+
+```
+Browser ──HTTPS──► Nginx / Cloud Run ──proxy /api/* (SNI)──► Spring Boot (CR or GKE) ──VPC──► GCE VM: Postgres 16
+                   dash-frontend                             dash-backend                             dash-pg
+                   0–3 instances                            CR: 0–5 / GKE: 1 pod                    4 M+ rows · GIN index
+                                    ▲─────────────── Pulumi TypeScript IaC ──────────────────────────▲
+```
 
 ---
 
