@@ -31,6 +31,8 @@ Open **`/explorer.html`** on the running backend to run live requests against ev
 
 ---
 
+## Stack
+
 | Component | Implementation |
 |---|---|
 | **Java / Spring Boot back-end** | Spring Boot 4, Java 21, NamedParameterJdbcTemplate, Flyway |
@@ -166,7 +168,7 @@ Browser ──HTTPS──► Nginx / Cloud Run ──proxy /api/* (SNI)──►
 
 ---
 
-## Running
+## Deployment / Running
 
 ```bash
 ./scripts/deploy.sh      # local [1] or GCP [2]
