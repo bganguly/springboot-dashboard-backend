@@ -160,7 +160,6 @@ deploy.sh (auto) or scripts/bake-demo-snapshot.sh
 ```bash
 ./scripts/deploy.sh      # local [1] or GCP [2]
 ./scripts/infra-down.sh  # stop local [1] or teardown GCP [2]
-./scripts/scale.sh       # interactive menu — scale up/down, pause/resume schedule
 ```
 
 `./scripts/deploy.sh` prompts for local or GCP on every run:
@@ -172,30 +171,6 @@ deploy.sh (auto) or scripts/bake-demo-snapshot.sh
                  provisions VPC · GCE Postgres VM · Cloud Run backend · Secret Manager
                  auto-restores demo snapshot from GCS if orders table is empty
 ```
-
-### Cost control — scheduled 8am–5pm Pacific window (weekdays)
-
-Both Cloud Run and GKE backends auto-scale on a weekday schedule managed by Cloud Scheduler:
-
-| Runtime | Scale-up | Scale-down | Idle cost |
-|---|---|---|---|
-| **Cloud Run** | min-instances → 1 at 8am | min-instances → 0 at 5pm | ~$0 (scales to zero) |
-| **GKE** | node pool → 1 at 8am | node pool → 0 at 5pm | ~$0 (no nodes running) |
-
-`./scripts/scale.sh` detects the active runtime automatically and shows an interactive prompt:
-
-```
-=== scale.sh — dash-lite (GKE · nodes=1) ===
-
-  [1] Scale up now    — bring backend online immediately
-  [2] Scale down now  — stop node / drop to zero (saves cost)
-  [3] Pause schedule  — disable the 8am/5pm auto-schedule
-  [4] Resume schedule — re-enable the 8am/5pm auto-schedule
-
-Choice [1/2/3/4]:
-```
-
-One-liners still work: `TIER=lite ./scripts/scale.sh up` / `down`
 
 ---
 
@@ -213,8 +188,6 @@ Browser ──HTTPS──► Nginx / Cloud Run ──proxy /api/* (SNI)──►
 ---
 
 ## Live Service
-
-> **Schedule:** Cloud Run scales to zero on a Cloud Scheduler weekday schedule (8 am – 5 pm PT). Outside those hours the app is offline; first request after 8 am may cold-start (~5–10 s).
 
 | | URL |
 |---|---|
