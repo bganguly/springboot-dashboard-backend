@@ -48,86 +48,6 @@ Open **`/explorer.html`** on the running backend to run live requests against ev
 ---
 
 
-## Scale & Performance
-
-> **4 M+ orders** in Cloud SQL PostgreSQL 16 — sub-second full-text search via GIN index on a denormalized `search_text` column; millisecond chart aggregates via pre-aggregated summary tables; zero sequential scans on the hot path.
-
-```
-Browser ──HTTPS──► Nginx / Cloud Run ──proxy /api/* (SNI)──► Spring Boot (CR or GKE) ──VPC──► GCE VM: Postgres 16
-                   dash-frontend                             dash-backend                             dash-pg
-                   0–3 instances                            CR: 0–5 / GKE: 1 pod                    4 M+ rows · GIN index
-                                    ▲─────────────── Pulumi TypeScript IaC ──────────────────────────▲
-```
-
----
-
-## Running
-
-```bash
-./scripts/deploy.sh      # local [1] or GCP [2]
-./scripts/infra-down.sh  # stop local [1] or teardown GCP [2]
-./scripts/scale.sh       # interactive menu — scale up/down, pause/resume schedule
-```
-
-`./scripts/deploy.sh` prompts for local or GCP on every run:
-
-```
-./scripts/deploy.sh
-  [1] Local  — starts Spring Boot on :8080 (uses local PG from .env)
-  [2] GCP    — docker build → push to Artifact Registry → pulumi up --yes
-                 provisions VPC · GCE Postgres VM · Cloud Run backend · Secret Manager
-                 auto-restores demo snapshot from GCS if orders table is empty
-```
-
-### Cost control — scheduled 8am–5pm Pacific window (weekdays)
-
-Both Cloud Run and GKE backends auto-scale on a weekday schedule managed by Cloud Scheduler:
-
-| Runtime | Scale-up | Scale-down | Idle cost |
-|---|---|---|---|
-| **Cloud Run** | min-instances → 1 at 8am | min-instances → 0 at 5pm | ~$0 (scales to zero) |
-| **GKE** | node pool → 1 at 8am | node pool → 0 at 5pm | ~$0 (no nodes running) |
-
-`./scripts/scale.sh` detects the active runtime automatically and shows an interactive prompt:
-
-```
-=== scale.sh — dash-lite (GKE · nodes=1) ===
-
-  [1] Scale up now    — bring backend online immediately
-  [2] Scale down now  — stop node / drop to zero (saves cost)
-  [3] Pause schedule  — disable the 8am/5pm auto-schedule
-  [4] Resume schedule — re-enable the 8am/5pm auto-schedule
-
-Choice [1/2/3/4]:
-```
-
-One-liners still work: `TIER=lite ./scripts/scale.sh up` / `down`
-
----
-
-## Live Service
-
-> **Schedule:** Cloud Run scales to zero on a Cloud Scheduler weekday schedule (8 am – 5 pm PT). Outside those hours the app is offline; first request after 8 am may cold-start (~5–10 s).
-
-| | URL |
-|---|---|
-| **App** | https://dash-lite-frontend-77y7e2wykq-uc.a.run.app |
-| **Backend API (direct)** | http:// |
-
-```bash
-# local
-BASE=https://dash-lite-frontend-77y7e2wykq-uc.a.run.app
-curl "$BASE/actuator/health"
-curl "$BASE/api/orders?page=1&size=3" | jq .total
-curl "$BASE/api/orders?q=sara+carter&page=1&size=3" | jq '.data[].customer'
-
-# GCP — via frontend proxy (same as browser / API explorer)
-BASE=https://dash-lite-frontend-77y7e2wykq-uc.a.run.app
-curl "$BASE/api/orders?page=1&size=3" | jq .total
-```
-
----
-
 ## Architecture
 
 ### Search & chart request flow — step by step
@@ -230,6 +150,86 @@ deploy.sh (auto) or scripts/bake-demo-snapshot.sh
 | **Trigger maintenance** | `fn_order_search_text()` (BEFORE INSERT/UPDATE on orders) + `fn_customer_name_to_orders()` (AFTER UPDATE on customers) keep `search_text` current without application-level logic |
 | **Startup resilience** | Cloud Run startup probe with `failureThreshold: 60` × `periodSeconds: 15` = 15 min — survives long Flyway migrations (e.g. UPDATE + CREATE INDEX on 4 M rows) |
 | **Zero-credential deploys** | Backend SA with `roles/secretmanager.secretAccessor` + `roles/cloudsql.client`; no passwords in code or Docker image |
+
+---
+
+## Scale & Performance
+
+> **4 M+ orders** in Cloud SQL PostgreSQL 16 — sub-second full-text search via GIN index on a denormalized `search_text` column; millisecond chart aggregates via pre-aggregated summary tables; zero sequential scans on the hot path.
+
+```
+Browser ──HTTPS──► Nginx / Cloud Run ──proxy /api/* (SNI)──► Spring Boot (CR or GKE) ──VPC──► GCE VM: Postgres 16
+                   dash-frontend                             dash-backend                             dash-pg
+                   0–3 instances                            CR: 0–5 / GKE: 1 pod                    4 M+ rows · GIN index
+                                    ▲─────────────── Pulumi TypeScript IaC ──────────────────────────▲
+```
+
+---
+
+## Running
+
+```bash
+./scripts/deploy.sh      # local [1] or GCP [2]
+./scripts/infra-down.sh  # stop local [1] or teardown GCP [2]
+./scripts/scale.sh       # interactive menu — scale up/down, pause/resume schedule
+```
+
+`./scripts/deploy.sh` prompts for local or GCP on every run:
+
+```
+./scripts/deploy.sh
+  [1] Local  — starts Spring Boot on :8080 (uses local PG from .env)
+  [2] GCP    — docker build → push to Artifact Registry → pulumi up --yes
+                 provisions VPC · GCE Postgres VM · Cloud Run backend · Secret Manager
+                 auto-restores demo snapshot from GCS if orders table is empty
+```
+
+### Cost control — scheduled 8am–5pm Pacific window (weekdays)
+
+Both Cloud Run and GKE backends auto-scale on a weekday schedule managed by Cloud Scheduler:
+
+| Runtime | Scale-up | Scale-down | Idle cost |
+|---|---|---|---|
+| **Cloud Run** | min-instances → 1 at 8am | min-instances → 0 at 5pm | ~$0 (scales to zero) |
+| **GKE** | node pool → 1 at 8am | node pool → 0 at 5pm | ~$0 (no nodes running) |
+
+`./scripts/scale.sh` detects the active runtime automatically and shows an interactive prompt:
+
+```
+=== scale.sh — dash-lite (GKE · nodes=1) ===
+
+  [1] Scale up now    — bring backend online immediately
+  [2] Scale down now  — stop node / drop to zero (saves cost)
+  [3] Pause schedule  — disable the 8am/5pm auto-schedule
+  [4] Resume schedule — re-enable the 8am/5pm auto-schedule
+
+Choice [1/2/3/4]:
+```
+
+One-liners still work: `TIER=lite ./scripts/scale.sh up` / `down`
+
+---
+
+## Live Service
+
+> **Schedule:** Cloud Run scales to zero on a Cloud Scheduler weekday schedule (8 am – 5 pm PT). Outside those hours the app is offline; first request after 8 am may cold-start (~5–10 s).
+
+| | URL |
+|---|---|
+| **App** | https://dash-lite-frontend-77y7e2wykq-uc.a.run.app |
+| **Backend API (direct)** | http:// |
+
+```bash
+# local
+BASE=https://dash-lite-frontend-77y7e2wykq-uc.a.run.app
+curl "$BASE/actuator/health"
+curl "$BASE/api/orders?page=1&size=3" | jq .total
+curl "$BASE/api/orders?q=sara+carter&page=1&size=3" | jq '.data[].customer'
+
+# GCP — via frontend proxy (same as browser / API explorer)
+BASE=https://dash-lite-frontend-77y7e2wykq-uc.a.run.app
+curl "$BASE/api/orders?page=1&size=3" | jq .total
+```
 
 ---
 
