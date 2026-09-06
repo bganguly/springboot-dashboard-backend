@@ -21,9 +21,13 @@ container images stored in Artifact Registry (analogous to ECR + ECS/EKS in AWS 
 
 ## Using the App
 
-1. **Search** — type in the search bar to query across all columns (name, notes, total, order ID, status, region, date) via GIN trigram index; sub-second on 4 M+ rows.
-2. **Filter** — use the sidebar to narrow by status, region, date range, or total amount.
-3. **Aggregates chart** — the chart shows daily orders by product category; drag the brush to zoom into any date window.
+Open **`/explorer.html`** on the running backend to run live requests against every endpoint from the browser — no curl required.
+
+1. **List orders** — `GET /api/orders` returns a paginated, date-sorted list of orders; response header shows total row count and query time.
+2. **Full-text search** — `GET /api/orders?q=<term>` hits the GIN pg_bigm index; enter at least 2 characters and observe sub-second response times on 4 M+ rows.
+3. **Aggregates** — `GET /api/aggregates?from=<date>&to=<date>&topCategories=<n>` returns daily order totals and revenue by product category from the pre-aggregated summary tables.
+4. **Customers** — `GET /api/customers` lists customers; supports optional `q` filter.
+5. **Regions** — `GET /api/regions` returns the distinct region list used by the filter sidebar in the frontend.
 
 ---
 
