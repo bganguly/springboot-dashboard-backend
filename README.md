@@ -187,27 +187,6 @@ Browser ──HTTPS──► Nginx / Cloud Run ──proxy /api/* (SNI)──►
 
 ---
 
-## Live Service
-
-| | URL |
-|---|---|
-| **App** | https://dash-lite-frontend-77y7e2wykq-uc.a.run.app |
-| **Backend API (direct)** | http:// |
-
-```bash
-# local
-BASE=https://dash-lite-frontend-77y7e2wykq-uc.a.run.app
-curl "$BASE/actuator/health"
-curl "$BASE/api/orders?page=1&size=3" | jq .total
-curl "$BASE/api/orders?q=sara+carter&page=1&size=3" | jq '.data[].customer'
-
-# GCP — via frontend proxy (same as browser / API explorer)
-BASE=https://dash-lite-frontend-77y7e2wykq-uc.a.run.app
-curl "$BASE/api/orders?page=1&size=3" | jq .total
-```
-
----
-
 ## Snapshot Data
 
 Demo data is seeded from a pre-built PostgreSQL dump stored in GCS:
