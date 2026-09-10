@@ -63,7 +63,7 @@ except Exception:
     print('cr')
 " 2>/dev/null || echo "cr")
   if [[ "$_EXISTING_RUNTIME" == "gke" ]]; then
-    printf '\n  Backend: currently GKE (~$22/mo). Switch to Cloud Run (scales to zero)? [Y/n, default N — keep gke]: '
+    printf '\n  Backend: currently GKE (~$22/mo). Switch to Cloud Run (scales to zero)? [y/N — default keep gke]: '
     read -r _BR
     case "${_BR:-N}" in
       [Yy]*) BACKEND_RUNTIME="cr"  ;;
