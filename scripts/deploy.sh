@@ -36,13 +36,13 @@ printf '\n=== springboot-dashboard-backend-gcp ===\n\n'
 printf '  [1] Local  — Spring Boot on localhost + local Postgres (no GCP cost)'
 (( _local_running )) && printf ' [running]' || printf ' [not detected]'
 printf '\n'
-printf '  [2] Lite   — GCP: Cloud Run (min-0) + Neon or e2-standard-2 Postgres VM (~$52/mo)'
+printf '  [2] Lite   — GCP: 100k-row dataset · Cloud Run backend · Neon or GCE Postgres'
 (( _lite_count > 0 )) && printf ' [%s resources active]' "$_lite_count" || printf ' [not deployed]'
 printf '\n'
-printf '  [3] Full   — GCP: Cloud Run (min-0) + Neon or n2-standard-4 Postgres VM (~$52/mo)'
+printf '  [3] Full   — GCP: 4M-row dataset  · Cloud Run backend · Neon or GCE Postgres'
 (( _full_count > 0 )) && printf ' [%s resources active]' "$_full_count" || printf ' [not deployed]'
 printf '\n'
-printf '               Neon recommended (~$0/mo, prompted after selection).\n'
+printf '               Neon recommended for DB (~$0/mo free tier, prompted after selection).\n'
 printf '\nChoice [1/2/3, default 2]: '
 read -r _MODE
 case "${_MODE:-2}" in
@@ -62,20 +62,21 @@ try:
 except Exception:
     print('cr')
 " 2>/dev/null || echo "cr")
-  printf '\n  Backend runtime:\n'
-  printf '  [1] Cloud Run — serverless, scales to zero\n'
-  printf '  [2] GKE       — Kubernetes on e2-standard-2 node (~$22/mo)\n'
   if [[ "$_EXISTING_RUNTIME" == "gke" ]]; then
-    printf '\nChoice [1/2, default 2 — gke (current)]: '
+    printf '\n  Backend: currently GKE (~$22/mo). Switch to Cloud Run (scales to zero)? [Y/n, default N — keep gke]: '
+    read -r _BR
+    case "${_BR:-N}" in
+      [Yy]*) BACKEND_RUNTIME="cr"  ;;
+      *)     BACKEND_RUNTIME="gke" ;;
+    esac
   else
-    printf '\nChoice [1/2, default 1 — cr]: '
+    printf '\n  Backend: Cloud Run (serverless, scales to zero). Use GKE instead (~$22/mo)? [y/N]: '
+    read -r _BR
+    case "${_BR:-N}" in
+      [Yy]*) BACKEND_RUNTIME="gke" ;;
+      *)     BACKEND_RUNTIME="cr"  ;;
+    esac
   fi
-  read -r _BR
-  case "$_BR" in
-    1) BACKEND_RUNTIME="cr"  ;;
-    2) BACKEND_RUNTIME="gke" ;;
-    *) BACKEND_RUNTIME="$_EXISTING_RUNTIME" ;;
-  esac
 fi
 
 USE_NEON="true"
