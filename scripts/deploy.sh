@@ -679,19 +679,17 @@ config:
   dashboard:useNeon: ${USE_NEON}
 PYAML
   fi
+  if [[ "$USE_NEON" == "true" ]]; then
+    printf '\n  Storing Neon DATABASE_URL as Pulumi config secret (needed before pulumi up)...\n'
+    pulumi config set --secret dashboard:neonDatabaseUrl "$NEON_DATABASE_URL" --stack "$DEPLOY_MODE"
+  fi
   _STEP="pulumi up"
   _pulumi_up_robust
 
 _pg_vm="${DEPLOY_MODE_PREFIX}-pg"
 
 if [[ "$USE_NEON" == "true" ]]; then
-  _STEP="neon secret"
-  printf '\n  Writing Neon DATABASE_URL to Secret Manager (%s-database-url)...\n' "$DEPLOY_MODE_PREFIX"
-  _EXISTING_VERSIONS=$(gcloud secrets versions list "${DEPLOY_MODE_PREFIX}-database-url" \
-    --project="$GCP_PROJECT" --format="value(name)" 2>/dev/null | wc -l | tr -d ' ')
-  printf '%s' "$NEON_DATABASE_URL" | gcloud secrets versions add "${DEPLOY_MODE_PREFIX}-database-url" \
-    --data-file=- --project="$GCP_PROJECT"
-  printf '  Neon DATABASE_URL written to Secret Manager.\n'
+  printf '\n  Neon DATABASE_URL stored in Secret Manager by Pulumi.\n'
 else
   _STEP="db vm setup"
   printf '\n  Resetting DB VM (sentinel guards against re-init if already done)...\n'

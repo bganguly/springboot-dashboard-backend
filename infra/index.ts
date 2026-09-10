@@ -17,6 +17,7 @@ const backendRuntime = config.get("backendRuntime") ?? "cr"; // "cr" | "gke"
 // When true: Neon (external serverless Postgres, ~$0/mo) is used instead of the GCE VM (~$52/mo).
 // GCE VM resources below are preserved — set useNeon: false to revert.
 const useNeon = config.getBoolean("useNeon") ?? false;
+const neonDatabaseUrl = useNeon ? config.requireSecret("neonDatabaseUrl") : undefined;
 
 // ── APIs ──────────────────────────────────────────────────────────────────────
 const apis = [
@@ -128,11 +129,16 @@ const dbUrlSecret = new gcp.secretmanager.Secret("database-url", {
 }, { dependsOn: apis });
 
 // GCE mode: Pulumi writes the secret version with the internal VPC URL.
-// Neon mode: deploy.sh writes the version with the Neon URL after pulumi up.
+// Neon mode: Pulumi writes the version with the Neon URL from config (set by deploy.sh before pulumi up).
 if (!useNeon && dbPassword) {
   dbUrlSecretVersion = new gcp.secretmanager.SecretVersion("database-url-v1", {
     secret: dbUrlSecret.id,
     secretData: pulumi.interpolate`postgresql://${dbUsername}:${dbPassword.result}@${dbVmIp}:5432/${dbName}`,
+  }, { retainOnDelete: true });
+} else if (useNeon && neonDatabaseUrl) {
+  dbUrlSecretVersion = new gcp.secretmanager.SecretVersion("database-url-v1", {
+    secret: dbUrlSecret.id,
+    secretData: neonDatabaseUrl,
   }, { retainOnDelete: true });
 }
 
@@ -167,7 +173,7 @@ new gcp.projects.IAMMember("backend-ar-reader", {
 let _backendUrl: pulumi.Output<string> = pulumi.output("");
 if (backendRuntime !== "gke") {
   const crDeps: pulumi.Resource[] = [registry];
-  if (!useNeon && dbUrlSecretVersion) crDeps.push(dbUrlSecretVersion);
+  if (dbUrlSecretVersion) crDeps.push(dbUrlSecretVersion);
 
   const backendService = new gcp.cloudrunv2.Service("backend-service", {
     name: `${namePrefix}-backend`,
