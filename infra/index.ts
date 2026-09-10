@@ -14,6 +14,9 @@ const dbVmType     = config.get("dbVmType")       ?? "n2-standard-4";
 const dbDiskGb     = config.getNumber("dbDiskGb") ?? 35;
 const backendImage   = config.get("backendImage")     ?? "";
 const backendRuntime = config.get("backendRuntime") ?? "cr"; // "cr" | "gke"
+// When true: Neon (external serverless Postgres, ~$0/mo) is used instead of the GCE VM (~$52/mo).
+// GCE VM resources below are preserved — set useNeon: false to revert.
+const useNeon = config.getBoolean("useNeon") ?? false;
 
 // ── APIs ──────────────────────────────────────────────────────────────────────
 const apis = [
@@ -42,7 +45,6 @@ const subnet = new gcp.compute.Subnetwork("subnet", {
   network: network.id,
 });
 
-// Allow anything in VPC to reach Postgres on 5432
 new gcp.compute.Firewall("allow-internal-to-db", {
   name: `${namePrefix}-allow-internal-db`,
   network: network.id,
@@ -51,15 +53,21 @@ new gcp.compute.Firewall("allow-internal-to-db", {
   allows: [{ protocol: "tcp", ports: ["5432"] }],
 });
 
-// ── Postgres on GCE ───────────────────────────────────────────────────────────
-const dbPassword = new random.RandomPassword("db-password", {
-  length: 24,
-  special: false,
-});
+// ── Postgres on GCE (~$52/mo always-on) ──────────────────────────────────────
+// Skipped when useNeon=true. Resources preserved here; re-enable by setting useNeon: false.
+let dbPassword: random.RandomPassword | undefined;
+let dbVmIp: pulumi.Output<string> = pulumi.output("n/a");
+let dbUrlSecretVersion: gcp.secretmanager.SecretVersion | undefined;
 
-// Runs once at first boot (guarded by sentinel). Installs Postgres 16 + pg_bigm,
-// configures VPC-wide access, and creates the app user/db.
-const _startupScript = `#!/bin/bash
+if (!useNeon) {
+  dbPassword = new random.RandomPassword("db-password", {
+    length: 24,
+    special: false,
+  });
+
+  // Runs once at first boot (guarded by sentinel). Installs Postgres 16 + pg_bigm,
+  // configures VPC-wide access, and creates the app user/db.
+  const _startupScript = `#!/bin/bash
 set -euo pipefail
 SENTINEL=/var/lib/postgresql/.pg16_initialized
 [ -f "$SENTINEL" ] && exit 0
@@ -86,31 +94,32 @@ sudo -u postgres psql -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;"
 sudo -u postgres psql -d $DB_NAME -c "CREATE EXTENSION IF NOT EXISTS pg_bigm;"
 touch "$SENTINEL"`;
 
-const dbVm = new gcp.compute.Instance("pg-vm", {
-  name: `${namePrefix}-pg`,
-  machineType: dbVmType,
-  zone: `${region}-a`,
-  bootDisk: {
-    initializeParams: {
-      image: "debian-cloud/debian-12",
-      size: dbDiskGb,
-      type: "pd-ssd",
+  const dbVm = new gcp.compute.Instance("pg-vm", {
+    name: `${namePrefix}-pg`,
+    machineType: dbVmType,
+    zone: `${region}-a`,
+    bootDisk: {
+      initializeParams: {
+        image: "debian-cloud/debian-12",
+        size: dbDiskGb,
+        type: "pd-ssd",
+      },
     },
-  },
-  networkInterfaces: [{
-    network: network.id,
-    subnetwork: subnet.id,
-  }],
-  metadata: {
-    "db-password": dbPassword.result,
-    "db-name": dbName,
-    "db-username": dbUsername,
-    "startup-script": _startupScript,
-  },
-  tags: [`${namePrefix}-pg`],
-});
+    networkInterfaces: [{
+      network: network.id,
+      subnetwork: subnet.id,
+    }],
+    metadata: {
+      "db-password": dbPassword.result,
+      "db-name": dbName,
+      "db-username": dbUsername,
+      "startup-script": _startupScript,
+    },
+    tags: [`${namePrefix}-pg`],
+  });
 
-const dbVmIp = dbVm.networkInterfaces.apply(nics => nics[0].networkIp);
+  dbVmIp = dbVm.networkInterfaces.apply(nics => nics[0].networkIp!);
+}
 
 // ── Secret Manager ────────────────────────────────────────────────────────────
 const dbUrlSecret = new gcp.secretmanager.Secret("database-url", {
@@ -118,10 +127,14 @@ const dbUrlSecret = new gcp.secretmanager.Secret("database-url", {
   replication: { auto: {} },
 }, { dependsOn: apis });
 
-const dbUrlSecretVersion = new gcp.secretmanager.SecretVersion("database-url-v1", {
-  secret: dbUrlSecret.id,
-  secretData: pulumi.interpolate`postgresql://${dbUsername}:${dbPassword.result}@${dbVmIp}:5432/${dbName}`,
-}, { retainOnDelete: true });
+// GCE mode: Pulumi writes the secret version with the internal VPC URL.
+// Neon mode: deploy.sh writes the version with the Neon URL after pulumi up.
+if (!useNeon && dbPassword) {
+  dbUrlSecretVersion = new gcp.secretmanager.SecretVersion("database-url-v1", {
+    secret: dbUrlSecret.id,
+    secretData: pulumi.interpolate`postgresql://${dbUsername}:${dbPassword.result}@${dbVmIp}:5432/${dbName}`,
+  }, { retainOnDelete: true });
+}
 
 // ── Artifact Registry ─────────────────────────────────────────────────────────
 const registry = new gcp.artifactregistry.Repository("repo", {
@@ -149,10 +162,13 @@ new gcp.projects.IAMMember("backend-ar-reader", {
 });
 
 // ── Cloud Run backend (cr mode only) ─────────────────────────────────────────
-// Direct VPC Egress reaches the GCE Postgres VM on its private IP.
-// min-instances: 0 → scales to zero when idle (~$1-2/month at demo traffic).
+// GCE mode: Direct VPC Egress reaches the Postgres VM on its private IP.
+// Neon mode: No VPC egress needed — Neon is external HTTPS; min=0 → ~$0/mo.
 let _backendUrl: pulumi.Output<string> = pulumi.output("");
 if (backendRuntime !== "gke") {
+  const crDeps: pulumi.Resource[] = [registry];
+  if (!useNeon && dbUrlSecretVersion) crDeps.push(dbUrlSecretVersion);
+
   const backendService = new gcp.cloudrunv2.Service("backend-service", {
     name: `${namePrefix}-backend`,
     location: region,
@@ -186,15 +202,17 @@ if (backendRuntime !== "gke") {
         minInstanceCount: 0,
         maxInstanceCount: 5,
       },
-      vpcAccess: {
-        networkInterfaces: [{
-          network: network.name,
-          subnetwork: subnet.name,
-        }],
-        egress: "PRIVATE_RANGES_ONLY",
-      },
+      ...(useNeon ? {} : {
+        vpcAccess: {
+          networkInterfaces: [{
+            network: network.name,
+            subnetwork: subnet.name,
+          }],
+          egress: "PRIVATE_RANGES_ONLY",
+        },
+      }),
     },
-  }, { dependsOn: [dbUrlSecretVersion, registry] });
+  }, { dependsOn: crDeps });
 
   new gcp.cloudrunv2.ServiceIamMember("backend-public", {
     project,
@@ -310,56 +328,62 @@ if (backendRuntime === "gke") {
   }, { dependsOn: apis });
 }
 
-// ── DB VM scheduler (weekdays 7:45am start → 5:10pm stop Pacific) ────────────
-// Starts 15 min before the Cloud Run backend warm-up at 8am so Postgres is
-// ready when the first request arrives. Stops 10 min after backend scales down.
-const dbVmSchedSa = new gcp.serviceaccount.Account("db-vm-sched-sa", {
-  accountId: `${namePrefix}-dbvm-sched-sa`,
-  displayName: "DB VM start/stop scheduler",
-});
+// ── DB VM scheduler (GCE mode only, weekdays 7:45am start → 5:10pm stop Pacific) ─
+// Skipped when useNeon=true — no VM to schedule.
+// Starts 15 min before Cloud Run warm-up at 8am so Postgres is ready on first request.
+if (!useNeon) {
+  const dbVmSchedSa = new gcp.serviceaccount.Account("db-vm-sched-sa", {
+    accountId: `${namePrefix}-dbvm-sched-sa`,
+    displayName: "DB VM start/stop scheduler",
+  });
 
-new gcp.projects.IAMMember("db-vm-sched-instance-admin", {
-  project,
-  role: "roles/compute.instanceAdmin.v1",
-  member: pulumi.interpolate`serviceAccount:${dbVmSchedSa.email}`,
-});
+  new gcp.projects.IAMMember("db-vm-sched-instance-admin", {
+    project,
+    role: "roles/compute.instanceAdmin.v1",
+    member: pulumi.interpolate`serviceAccount:${dbVmSchedSa.email}`,
+  });
 
-const _vmStartUri = `https://compute.googleapis.com/compute/v1/projects/${project}/zones/${region}-a/instances/${namePrefix}-pg/start`;
-const _vmStopUri  = `https://compute.googleapis.com/compute/v1/projects/${project}/zones/${region}-a/instances/${namePrefix}-pg/stop`;
-const _emptyBody  = Buffer.from("{}").toString("base64");
+  const _vmStartUri = `https://compute.googleapis.com/compute/v1/projects/${project}/zones/${region}-a/instances/${namePrefix}-pg/start`;
+  const _vmStopUri  = `https://compute.googleapis.com/compute/v1/projects/${project}/zones/${region}-a/instances/${namePrefix}-pg/stop`;
+  const _emptyBody  = Buffer.from("{}").toString("base64");
 
-new gcp.cloudscheduler.Job("db-vm-start", {
-  name: `${namePrefix}-db-vm-start`,
-  region,
-  schedule: "45 7 * * 1-5",
-  timeZone: "America/Los_Angeles",
-  httpTarget: {
-    uri: _vmStartUri,
-    httpMethod: "POST",
-    body: _emptyBody,
-    headers: { "Content-Type": "application/json" },
-    oauthToken: { serviceAccountEmail: dbVmSchedSa.email, scope: "https://www.googleapis.com/auth/cloud-platform" },
-  },
-}, { dependsOn: apis });
+  new gcp.cloudscheduler.Job("db-vm-start", {
+    name: `${namePrefix}-db-vm-start`,
+    region,
+    schedule: "45 7 * * 1-5",
+    timeZone: "America/Los_Angeles",
+    httpTarget: {
+      uri: _vmStartUri,
+      httpMethod: "POST",
+      body: _emptyBody,
+      headers: { "Content-Type": "application/json" },
+      oauthToken: { serviceAccountEmail: dbVmSchedSa.email, scope: "https://www.googleapis.com/auth/cloud-platform" },
+    },
+  }, { dependsOn: apis });
 
-new gcp.cloudscheduler.Job("db-vm-stop", {
-  name: `${namePrefix}-db-vm-stop`,
-  region,
-  schedule: "10 17 * * 1-5",
-  timeZone: "America/Los_Angeles",
-  httpTarget: {
-    uri: _vmStopUri,
-    httpMethod: "POST",
-    body: _emptyBody,
-    headers: { "Content-Type": "application/json" },
-    oauthToken: { serviceAccountEmail: dbVmSchedSa.email, scope: "https://www.googleapis.com/auth/cloud-platform" },
-  },
-}, { dependsOn: apis });
+  new gcp.cloudscheduler.Job("db-vm-stop", {
+    name: `${namePrefix}-db-vm-stop`,
+    region,
+    schedule: "10 17 * * 1-5",
+    timeZone: "America/Los_Angeles",
+    httpTarget: {
+      uri: _vmStopUri,
+      httpMethod: "POST",
+      body: _emptyBody,
+      headers: { "Content-Type": "application/json" },
+      oauthToken: { serviceAccountEmail: dbVmSchedSa.email, scope: "https://www.googleapis.com/auth/cloud-platform" },
+    },
+  }, { dependsOn: apis });
+}
 
 // ── Outputs ───────────────────────────────────────────────────────────────────
-export const dbVmInternalIp   = dbVmIp;
+export const dbVmInternalIp   = useNeon ? pulumi.output("n/a — using Neon") : dbVmIp;
 export const artifactRegistry = pulumi.interpolate`${region}-docker.pkg.dev/${project}/${registry.repositoryId}`;
 export const backendUrl       = _backendUrl;
-export const databaseUrl      = pulumi.secret(
-  pulumi.interpolate`postgresql://${dbUsername}:${dbPassword.result}@${dbVmIp}:5432/${dbName}`
-);
+export const databaseUrl      = useNeon
+  ? pulumi.output("(Neon URL written to Secret Manager by deploy.sh)")
+  : pulumi.secret(
+      dbPassword
+        ? pulumi.interpolate`postgresql://${dbUsername}:${dbPassword.result}@${dbVmIp}:5432/${dbName}`
+        : pulumi.output("n/a")
+    );

@@ -78,16 +78,40 @@ except Exception:
   esac
 fi
 
+USE_NEON="true"
+NEON_DATABASE_URL=""
+if [[ "$_TARGET" == "remote" ]]; then
+  printf '\n  Database backend:\n'
+  printf '  [Y] Neon serverless Postgres  — free tier, auto-suspends when idle (~$0/mo)\n'
+  printf '  [N] GCE Postgres VM           — always-on, ~$52/mo at current GCP rates\n'
+  printf '\nUse Neon? [Y/n, default Y]: '
+  read -r _NEON
+  case "${_NEON:-Y}" in
+    [Nn]*) USE_NEON="false" ;;
+    *)     USE_NEON="true"  ;;
+  esac
+  if [[ "$USE_NEON" == "true" ]]; then
+    printf '  Enter your Neon DATABASE_URL\n'
+    printf '  (postgresql://user:pass@ep-xxx.neon.tech/dbname?sslmode=require):\n  > '
+    read -r NEON_DATABASE_URL
+    [[ -n "$NEON_DATABASE_URL" ]] || { printf 'Neon URL is required.\n'; exit 1; }
+  fi
+fi
+
 if [[ "$_TARGET" == "remote" ]]; then
   if [[ "$DEPLOY_MODE" == "lite" ]]; then
     printf '\n--- Lite GCP summary ---\n'
-    if [[ "$BACKEND_RUNTIME" == "gke" ]]; then
+    if [[ "$USE_NEON" == "true" ]]; then
+      printf '  Backend:    Cloud Run · scale-to-zero (cold start ~5s on first request)\n'
+      printf '  DB:         Neon serverless Postgres (auto-suspends after 5 min idle, resumes ~500ms)\n'
+      printf '  Cost est:   ~$0-2/mo GCP (Cloud Run only — Neon free tier)\n'
+    elif [[ "$BACKEND_RUNTIME" == "gke" ]]; then
       printf '  Backend:    GKE (e2-standard-2 node, always-on)\n'
-      printf '  DB:         e2-standard-2 Postgres 16 VM (2 vCPU, 8 GB), 20 GB SSD\n'
+      printf '  DB:         e2-standard-2 Postgres 16 VM (2 vCPU, 8 GB), 20 GB SSD (always-on, ~$52/mo)\n'
       printf '  Cost est:   ~$66/mo\n'
     else
       printf '  Backend:    Cloud Run · scale-to-zero (cold start ~5s on first request)\n'
-      printf '  DB:         e2-standard-2 Postgres 16 VM (2 vCPU, 8 GB), 20 GB SSD (always-on)\n'
+      printf '  DB:         e2-standard-2 Postgres 16 VM (2 vCPU, 8 GB), 20 GB SSD (always-on, ~$52/mo)\n'
       printf '  Cost est:   ~$17/mo GCP · ~$10/mo NextJS AWS (scheduled) · ~$27/mo combined\n'
     fi
   else
@@ -96,18 +120,26 @@ if [[ "$_TARGET" == "remote" ]]; then
     printf '  !!                                                        !!\n'
     printf '  !!   FULL MODE SELECTED — THIS IS EXPENSIVE               !!\n'
     printf '  !!                                                        !!\n'
-    if [[ "$BACKEND_RUNTIME" == "gke" ]]; then
-    printf '  !!   Backend:  GKE (e2-standard-2 node, always-on)       !!\n'
-    else
+    if [[ "$USE_NEON" == "true" ]]; then
     printf '  !!   Backend:  Cloud Run (min-instances: 0)              !!\n'
-    fi
+    printf '  !!   DB:       Neon serverless Postgres (~$0/mo)         !!\n'
+    printf '  !!   Cost est: ~$1-3/mo (Cloud Run only, Neon free tier) !!\n'
+    elif [[ "$BACKEND_RUNTIME" == "gke" ]]; then
+    printf '  !!   Backend:  GKE (e2-standard-2 node, always-on)       !!\n'
     printf '  !!   DB:       n2-standard-4 Postgres VM (4 vCPU, 16 GB) !!\n'
     printf '  !!   Cost est: ~$200-300/mo — TEAR DOWN WHEN DONE        !!\n'
+    else
+    printf '  !!   Backend:  Cloud Run (min-instances: 0)              !!\n'
+    printf '  !!   DB:       n2-standard-4 Postgres VM (4 vCPU, 16 GB) !!\n'
+    printf '  !!   Cost est: ~$200-300/mo — TEAR DOWN WHEN DONE        !!\n'
+    fi
     printf '  !!                                                        !!\n'
     printf '  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n'
-    printf '\n  Type YES to continue with full deploy: '
-    read -r _FULL_CONFIRM
-    [[ "$_FULL_CONFIRM" == "YES" ]] || { printf 'Aborted.\n'; exit 0; }
+    if [[ "$USE_NEON" != "true" ]]; then
+      printf '\n  Type YES to continue with full deploy: '
+      read -r _FULL_CONFIRM
+      [[ "$_FULL_CONFIRM" == "YES" ]] || { printf 'Aborted.\n'; exit 0; }
+    fi
   fi
 fi
 
@@ -274,7 +306,7 @@ if [[ "$_TARGET" == "local" ]]; then
   done
   printf '  backend ready\n'
 
-  FRONTEND_DIR="$ROOT_DIR/../dashboard-frontend-gcp"
+  FRONTEND_DIR="$ROOT_DIR/../dashboard-frontend"
   if [[ -d "$FRONTEND_DIR" ]]; then
     printf '\n=== starting frontend :3006 ===\n'
     cd "$FRONTEND_DIR"
@@ -285,7 +317,7 @@ if [[ "$_TARGET" == "local" ]]; then
     printf '  Backend logs → tail -f %s\n\n' "$BACKEND_LOG"
     BACKEND_URL="http://localhost:8080" npm run dev
   else
-    printf '\n  dashboard-frontend-gcp not found — backend only\n'
+    printf '\n  dashboard-frontend not found — backend only\n'
     wait "$BACKEND_PID"
   fi
 
@@ -627,6 +659,7 @@ config:
   dashboard:dbDiskGb: "20"
   dashboard:backendImage: ${IMAGE}
   dashboard:backendRuntime: ${BACKEND_RUNTIME}
+  dashboard:useNeon: ${USE_NEON}
 PYAML
   else
     cat > "Pulumi.${DEPLOY_MODE}.yaml" <<PYAML
@@ -638,18 +671,29 @@ config:
   dashboard:dbDiskGb: "35"
   dashboard:backendImage: ${IMAGE}
   dashboard:backendRuntime: ${BACKEND_RUNTIME}
+  dashboard:useNeon: ${USE_NEON}
 PYAML
   fi
   _STEP="pulumi up"
   _pulumi_up_robust
 
+_pg_vm="${DEPLOY_MODE_PREFIX}-pg"
+
+if [[ "$USE_NEON" == "true" ]]; then
+  _STEP="neon secret"
+  printf '\n  Writing Neon DATABASE_URL to Secret Manager (%s-database-url)...\n' "$DEPLOY_MODE_PREFIX"
+  _EXISTING_VERSIONS=$(gcloud secrets versions list "${DEPLOY_MODE_PREFIX}-database-url" \
+    --project="$GCP_PROJECT" --format="value(name)" 2>/dev/null | wc -l | tr -d ' ')
+  printf '%s' "$NEON_DATABASE_URL" | gcloud secrets versions add "${DEPLOY_MODE_PREFIX}-database-url" \
+    --data-file=- --project="$GCP_PROJECT"
+  printf '  Neon DATABASE_URL written to Secret Manager.\n'
+else
   _STEP="db vm setup"
   printf '\n  Resetting DB VM (sentinel guards against re-init if already done)...\n'
-  gcloud compute instances reset "${DEPLOY_MODE_PREFIX}-pg" \
+  gcloud compute instances reset "${_pg_vm}" \
     --zone "${GCP_REGION}-a" --project "$GCP_PROJECT" --quiet || true
   printf '  DB VM reset — Postgres init takes ~3-5 min on first boot.\n'
 
-  _pg_vm="${DEPLOY_MODE_PREFIX}-pg"
   printf '\n  Waiting for DB VM SSH after reset...\n'
   for _i in $(seq 1 24); do
     if gcloud compute ssh "$_pg_vm" \
@@ -703,6 +747,7 @@ PYAML
   else
     printf '  (secret not found — skipping password sync)\n'
   fi
+fi
 
 if [[ "$DEPLOY_MODE" == "lite" ]]; then
   DEMO_SNAPSHOT_GCS_URI="gs://bikram-java-dash-snapshots/dash/demo-lite.dump"
@@ -719,17 +764,22 @@ else
   BAKE_SECRET_NAME="${DEPLOY_MODE_PREFIX}-database-url"
   S3_SOURCE_URI="s3://bikram-nextjs-subsecond-fetch-with-websockets/nextjs-dash/demo.dump"
 fi
+_GCS_BASENAME=$(basename "$DEMO_SNAPSHOT_GCS_URI")
 
 printf '\nChecking database...\n'
 _DB_ORDERS="0"
 if [[ "$_TARGET" == "remote" ]]; then
-  _DB_ORDERS=$(gcloud compute ssh "${_pg_vm}" \
-    --zone "${GCP_REGION}-a" --project "$GCP_PROJECT" \
-    --tunnel-through-iap --ssh-flag="-o ConnectTimeout=10" \
-    --command "sudo -u postgres psql -d app -t -c 'SELECT COUNT(*) FROM orders;' 2>/dev/null || echo 0" \
-    2>/dev/null | tr -d ' \n' || echo "0")
+  if [[ "$USE_NEON" == "true" ]]; then
+    _DB_ORDERS=$(psql "$NEON_DATABASE_URL" -t -c 'SELECT COUNT(*) FROM orders;' 2>/dev/null | tr -d ' \n' || echo "0")
+  else
+    _DB_ORDERS=$(gcloud compute ssh "${_pg_vm}" \
+      --zone "${GCP_REGION}-a" --project "$GCP_PROJECT" \
+      --tunnel-through-iap --ssh-flag="-o ConnectTimeout=10" \
+      --command "sudo -u postgres psql -d app -t -c 'SELECT COUNT(*) FROM orders;' 2>/dev/null || echo 0" \
+      2>/dev/null | tr -d ' \n' || echo "0")
+  fi
   [[ "${_DB_ORDERS:-0}" =~ ^[0-9]+$ ]] || _DB_ORDERS="0"
-  printf '  DB row count (psql): %s\n' "$_DB_ORDERS"
+  printf '  DB row count: %s\n' "$_DB_ORDERS"
 else
   for _i in 1 2 3 4 5; do
     _DB_ORDERS=$(curl -sf "${BACKEND_URL}/api/orders?page=0&size=1" 2>/dev/null \
@@ -743,91 +793,134 @@ fi
 if [[ "${_DB_ORDERS:-0}" -gt 0 ]]; then
   printf 'Database has %s orders — skipping seed.\n' "$_DB_ORDERS"
 else
-  printf 'Database empty — checking seed sources...\n'
-  _SKIP_BAKE=0
-  _GCS_BASENAME=$(basename "$DEMO_SNAPSHOT_GCS_URI")
-  _GCS_TOKEN=$(gcloud auth print-access-token 2>/dev/null || true)
-  _GCS_EXISTS=$(curl -sf \
-    "https://storage.googleapis.com/storage/v1/b/bikram-java-dash-snapshots/o/dash%2F${_GCS_BASENAME}" \
-    -H "Authorization: Bearer ${_GCS_TOKEN}" 2>/dev/null \
-    | python3 -c "import sys,json;json.load(sys.stdin);print('yes')" 2>/dev/null || printf 'no')
-  if [[ "$_GCS_EXISTS" == "yes" ]]; then
-    printf '  GCS snapshot found — bake will restore from GCS (no AWS needed).\n'
-  else
-    printf '  GCS snapshot not found — checking AWS credentials...\n'
-    _AWS_SECRET_OK=$(gcloud secrets versions access latest \
-      --secret="dash-aws-credentials" --project="$GCP_PROJECT" >/dev/null 2>&1 && printf 'yes' || printf '')
-    if [[ -z "$_AWS_SECRET_OK" ]]; then
-      printf '\nWARNING: Database is empty and no seed source is available.\n'
-      printf '  GCS snapshot missing: gs://bikram-java-dash-snapshots/dash/%s\n' "$_GCS_BASENAME"
-      printf '  AWS secret missing:   dash-aws-credentials in project %s\n' "$GCP_PROJECT"
-      printf '\n  Backend is running — continuing without seed data.\n'
-      printf '  To seed later, create the AWS secret then re-run deploy.sh:\n'
-      printf '    printf "AWS_ACCESS_KEY_ID=...\\nAWS_SECRET_ACCESS_KEY=...\\nAWS_DEFAULT_REGION=us-east-1" \\\n'
-      printf '      | gcloud secrets create dash-aws-credentials --data-file=- --project=%s\n' "$GCP_PROJECT"
-      _SKIP_BAKE=1
-    fi
-  fi
+  printf 'Database empty — seeding...\n'
 
-  if (( _SKIP_BAKE == 0 )); then
-    _STEP="db bake"
-  printf 'Starting VM bake...\n'
-
-  gcloud compute firewall-rules describe "${BAKE_VM_NETWORK}-allow-iap-ssh" \
-    --project="$GCP_PROJECT" >/dev/null 2>&1 || \
-  gcloud compute firewall-rules create "${BAKE_VM_NETWORK}-allow-iap-ssh" \
-    --project="$GCP_PROJECT" --network="$BAKE_VM_NETWORK" \
-    --direction=INGRESS --source-ranges=35.235.240.0/20 \
-    --allow=tcp:22 --quiet
-
-  gcloud compute networks subnets update "$BAKE_VM_SUBNET" \
-    --project="$GCP_PROJECT" --region="$GCP_REGION" \
-    --enable-private-ip-google-access --quiet 2>/dev/null || true
-
-  if gcloud compute instances describe "$BAKE_VM_NAME" \
-      --zone="${GCP_REGION}-a" --project="$GCP_PROJECT" \
-      --format="value(name)" >/dev/null 2>&1; then
-    _VM_SCOPES=$(gcloud compute instances describe "$BAKE_VM_NAME" \
-      --zone="${GCP_REGION}-a" --project="$GCP_PROJECT" \
-      --format="value(serviceAccounts[0].scopes)" 2>/dev/null || echo "")
-    if [[ "$_VM_SCOPES" != *"cloud-platform"* ]]; then
-      printf '  Bake VM missing cloud-platform scope — deleting to recreate...\n'
-      gcloud compute instances delete "$BAKE_VM_NAME" \
-        --zone="${GCP_REGION}-a" --project="$GCP_PROJECT" --quiet 2>/dev/null || true
+  if [[ "$USE_NEON" == "true" ]]; then
+    _STEP="db seed (neon)"
+    printf 'Seeding Neon via local pg_restore...\n'
+    command -v pg_restore >/dev/null 2>&1 || { printf '  pg_restore not found — install: brew install libpq\n'; exit 1; }
+    command -v psql >/dev/null 2>&1 || { printf '  psql not found — install: brew install libpq\n'; exit 1; }
+    _TMP_DUMP=$(mktemp /tmp/bake.XXXXXX.dump)
+    _GCS_TOKEN=$(gcloud auth print-access-token 2>/dev/null || true)
+    _GCS_EXISTS=$(curl -sf \
+      "https://storage.googleapis.com/storage/v1/b/bikram-java-dash-snapshots/o/dash%2F${_GCS_BASENAME}" \
+      -H "Authorization: Bearer ${_GCS_TOKEN}" 2>/dev/null \
+      | python3 -c "import sys,json;json.load(sys.stdin);print('yes')" 2>/dev/null || printf 'no')
+    if [[ "$_GCS_EXISTS" == "yes" ]]; then
+      printf '  Downloading %s from GCS...\n' "$_GCS_BASENAME"
+      gsutil cp "$DEMO_SNAPSHOT_GCS_URI" "$_TMP_DUMP" 2>/dev/null || \
+      curl -fL \
+        "https://storage.googleapis.com/storage/v1/b/bikram-java-dash-snapshots/o/dash%2F${_GCS_BASENAME}?alt=media" \
+        -H "Authorization: Bearer ${_GCS_TOKEN}" -o "$_TMP_DUMP"
     else
-      printf '  Bake VM already exists with correct scopes.\n'
+      printf '  GCS snapshot not found — checking AWS credentials...\n'
+      _AWS_SECRET_OK=$(gcloud secrets versions access latest \
+        --secret="dash-aws-credentials" --project="$GCP_PROJECT" >/dev/null 2>&1 && printf 'yes' || printf '')
+      if [[ -z "$_AWS_SECRET_OK" ]]; then
+        printf '\nWARNING: No GCS snapshot and no AWS creds — DB will be empty.\n'
+        rm -f "$_TMP_DUMP"
+        _TMP_DUMP=""
+      else
+        _AWS_CREDS=$(gcloud secrets versions access latest \
+          --secret="dash-aws-credentials" --project="$GCP_PROJECT" 2>/dev/null)
+        export $(printf '%s' "$_AWS_CREDS" | grep -E '^AWS_' | xargs)
+        printf '  Downloading %s from S3...\n' "$_GCS_BASENAME"
+        aws s3 cp "$S3_SOURCE_URI" "$_TMP_DUMP"
+        printf '  Saving snapshot to GCS for future deploys...\n'
+        gsutil cp "$_TMP_DUMP" "$DEMO_SNAPSHOT_GCS_URI" 2>/dev/null || true
+      fi
     fi
-  fi
+    if [[ -n "$_TMP_DUMP" && -s "$_TMP_DUMP" ]]; then
+      printf '  Running pg_restore against Neon...\n'
+      pg_restore --no-owner --no-privileges --clean --if-exists \
+        -d "$NEON_DATABASE_URL" "$_TMP_DUMP" || true
+      rm -f "$_TMP_DUMP"
+      printf 'Seeding complete.\n'
+    fi
 
-  if ! gcloud compute instances describe "$BAKE_VM_NAME" \
-      --zone="${GCP_REGION}-a" --project="$GCP_PROJECT" \
-      --format="value(name)" >/dev/null 2>&1; then
-    printf '  Creating bake VM...\n'
-    gcloud compute instances create "$BAKE_VM_NAME" \
-      --project="$GCP_PROJECT" --zone="${GCP_REGION}-a" \
-      --machine-type=n2-standard-8 \
-      --image-family=debian-12 --image-project=debian-cloud \
-      --boot-disk-size=50GB \
-      --network="$BAKE_VM_NETWORK" --subnet="$BAKE_VM_SUBNET" \
-      --no-address --scopes=cloud-platform --quiet
-    printf '  Waiting for VM startup...\n'; sleep 30
-  fi
+  else
+    _SKIP_BAKE=0
+    _GCS_TOKEN=$(gcloud auth print-access-token 2>/dev/null || true)
+    _GCS_EXISTS=$(curl -sf \
+      "https://storage.googleapis.com/storage/v1/b/bikram-java-dash-snapshots/o/dash%2F${_GCS_BASENAME}" \
+      -H "Authorization: Bearer ${_GCS_TOKEN}" 2>/dev/null \
+      | python3 -c "import sys,json;json.load(sys.stdin);print('yes')" 2>/dev/null || printf 'no')
+    if [[ "$_GCS_EXISTS" == "yes" ]]; then
+      printf '  GCS snapshot found — bake will restore from GCS (no AWS needed).\n'
+    else
+      printf '  GCS snapshot not found — checking AWS credentials...\n'
+      _AWS_SECRET_OK=$(gcloud secrets versions access latest \
+        --secret="dash-aws-credentials" --project="$GCP_PROJECT" >/dev/null 2>&1 && printf 'yes' || printf '')
+      if [[ -z "$_AWS_SECRET_OK" ]]; then
+        printf '\nWARNING: Database is empty and no seed source is available.\n'
+        printf '  GCS snapshot missing: gs://bikram-java-dash-snapshots/dash/%s\n' "$_GCS_BASENAME"
+        printf '  AWS secret missing:   dash-aws-credentials in project %s\n' "$GCP_PROJECT"
+        printf '\n  Backend is running — continuing without seed data.\n'
+        printf '  To seed later, create the AWS secret then re-run deploy.sh:\n'
+        printf '    printf "AWS_ACCESS_KEY_ID=...\\nAWS_SECRET_ACCESS_KEY=...\\nAWS_DEFAULT_REGION=us-east-1" \\\n'
+        printf '      | gcloud secrets create dash-aws-credentials --data-file=- --project=%s\n' "$GCP_PROJECT"
+        _SKIP_BAKE=1
+      fi
+    fi
 
-  gcloud compute ssh "$BAKE_VM_NAME" \
-    --project="$GCP_PROJECT" --zone="${GCP_REGION}-a" \
-    --tunnel-through-iap --ssh-flag="-o ConnectTimeout=30" \
-    --command='command -v pg_restore >/dev/null 2>&1 || (
-      echo "deb http://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
-        | sudo tee /etc/apt/sources.list.d/pgdg.list &&
-      curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
-        | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/postgresql.gpg &&
-      sudo apt-get update -qq &&
-      sudo apt-get install -y postgresql-client-16 awscli
-    )' 2>/dev/null
+    if (( _SKIP_BAKE == 0 )); then
+      _STEP="db bake"
+      printf 'Starting VM bake...\n'
 
-  _BAKE_SCRIPT=$(mktemp)
-  _GCS_BASENAME=$(basename "$DEMO_SNAPSHOT_GCS_URI")
-  cat > "$_BAKE_SCRIPT" << BAKE_EOF
+      gcloud compute firewall-rules describe "${BAKE_VM_NETWORK}-allow-iap-ssh" \
+        --project="$GCP_PROJECT" >/dev/null 2>&1 || \
+      gcloud compute firewall-rules create "${BAKE_VM_NETWORK}-allow-iap-ssh" \
+        --project="$GCP_PROJECT" --network="$BAKE_VM_NETWORK" \
+        --direction=INGRESS --source-ranges=35.235.240.0/20 \
+        --allow=tcp:22 --quiet
+
+      gcloud compute networks subnets update "$BAKE_VM_SUBNET" \
+        --project="$GCP_PROJECT" --region="$GCP_REGION" \
+        --enable-private-ip-google-access --quiet 2>/dev/null || true
+
+      if gcloud compute instances describe "$BAKE_VM_NAME" \
+          --zone="${GCP_REGION}-a" --project="$GCP_PROJECT" \
+          --format="value(name)" >/dev/null 2>&1; then
+        _VM_SCOPES=$(gcloud compute instances describe "$BAKE_VM_NAME" \
+          --zone="${GCP_REGION}-a" --project="$GCP_PROJECT" \
+          --format="value(serviceAccounts[0].scopes)" 2>/dev/null || echo "")
+        if [[ "$_VM_SCOPES" != *"cloud-platform"* ]]; then
+          printf '  Bake VM missing cloud-platform scope — deleting to recreate...\n'
+          gcloud compute instances delete "$BAKE_VM_NAME" \
+            --zone="${GCP_REGION}-a" --project="$GCP_PROJECT" --quiet 2>/dev/null || true
+        else
+          printf '  Bake VM already exists with correct scopes.\n'
+        fi
+      fi
+
+      if ! gcloud compute instances describe "$BAKE_VM_NAME" \
+          --zone="${GCP_REGION}-a" --project="$GCP_PROJECT" \
+          --format="value(name)" >/dev/null 2>&1; then
+        printf '  Creating bake VM...\n'
+        gcloud compute instances create "$BAKE_VM_NAME" \
+          --project="$GCP_PROJECT" --zone="${GCP_REGION}-a" \
+          --machine-type=n2-standard-8 \
+          --image-family=debian-12 --image-project=debian-cloud \
+          --boot-disk-size=50GB \
+          --network="$BAKE_VM_NETWORK" --subnet="$BAKE_VM_SUBNET" \
+          --no-address --scopes=cloud-platform --quiet
+        printf '  Waiting for VM startup...\n'; sleep 30
+      fi
+
+      gcloud compute ssh "$BAKE_VM_NAME" \
+        --project="$GCP_PROJECT" --zone="${GCP_REGION}-a" \
+        --tunnel-through-iap --ssh-flag="-o ConnectTimeout=30" \
+        --command='command -v pg_restore >/dev/null 2>&1 || (
+          echo "deb http://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list &&
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/postgresql.gpg &&
+          sudo apt-get update -qq &&
+          sudo apt-get install -y postgresql-client-16 awscli
+        )' 2>/dev/null
+
+      _BAKE_SCRIPT=$(mktemp)
+      cat > "$_BAKE_SCRIPT" << BAKE_EOF
 #!/bin/bash
 set -euo pipefail
 PROJECT="${GCP_PROJECT}"
@@ -896,36 +989,43 @@ rm -f /tmp/bake.dump
 echo "=== done ==="
 BAKE_EOF
 
-  gcloud compute scp "$_BAKE_SCRIPT" \
-    "${BAKE_VM_NAME}:/tmp/bake.sh" \
-    --project="$GCP_PROJECT" --zone="${GCP_REGION}-a" \
-    --tunnel-through-iap --quiet
-  rm -f "$_BAKE_SCRIPT"
+      gcloud compute scp "$_BAKE_SCRIPT" \
+        "${BAKE_VM_NAME}:/tmp/bake.sh" \
+        --project="$GCP_PROJECT" --zone="${GCP_REGION}-a" \
+        --tunnel-through-iap --quiet
+      rm -f "$_BAKE_SCRIPT"
 
-  printf '  Running restore on VM...\n'
-  gcloud compute ssh "$BAKE_VM_NAME" \
-    --project="$GCP_PROJECT" --zone="${GCP_REGION}-a" \
-    --tunnel-through-iap --ssh-flag="-o ConnectTimeout=30" \
-    --command='bash /tmp/bake.sh' || {
-    printf '  [WARN] Bake script exited with errors — deploy continues but DB may be empty.\n'
-  }
+      printf '  Running restore on VM...\n'
+      gcloud compute ssh "$BAKE_VM_NAME" \
+        --project="$GCP_PROJECT" --zone="${GCP_REGION}-a" \
+        --tunnel-through-iap --ssh-flag="-o ConnectTimeout=30" \
+        --command='bash /tmp/bake.sh' || {
+        printf '  [WARN] Bake script exited with errors — deploy continues but DB may be empty.\n'
+      }
 
-  printf '  Deleting bake VM...\n'
-  gcloud compute instances delete "$BAKE_VM_NAME" \
-    --zone="${GCP_REGION}-a" --project="$GCP_PROJECT" --quiet
+      printf '  Deleting bake VM...\n'
+      gcloud compute instances delete "$BAKE_VM_NAME" \
+        --zone="${GCP_REGION}-a" --project="$GCP_PROJECT" --quiet
 
-  printf 'Seeding complete.\n'
+      printf 'Seeding complete.\n'
+    fi
   fi
 fi
 
   printf '\n  Syncing daily_order_count from orders table...\n'
-  gcloud compute ssh "${_pg_vm}" \
-    --zone "${GCP_REGION}-a" --project "$GCP_PROJECT" \
-    --tunnel-through-iap --ssh-flag="-o ConnectTimeout=10" \
-    --command "sudo -u postgres psql -d app -c \"INSERT INTO daily_order_count (date, \\\"totalOrders\\\") SELECT \\\"placedAt\\\"::date, COUNT(*) FROM orders GROUP BY \\\"placedAt\\\"::date ON CONFLICT (date) DO UPDATE SET \\\"totalOrders\\\" = EXCLUDED.\\\"totalOrders\\\";\"" \
-    2>/dev/null \
-    && printf '  daily_order_count synced.\n' \
-    || printf '  (daily_order_count sync skipped — SSH unavailable)\n'
+  if [[ "$USE_NEON" == "true" ]]; then
+    psql "$NEON_DATABASE_URL" -c "INSERT INTO daily_order_count (date, \"totalOrders\") SELECT \"placedAt\"::date, COUNT(*) FROM orders GROUP BY \"placedAt\"::date ON CONFLICT (date) DO UPDATE SET \"totalOrders\" = EXCLUDED.\"totalOrders\";" 2>/dev/null \
+      && printf '  daily_order_count synced.\n' \
+      || printf '  (daily_order_count sync skipped)\n'
+  else
+    gcloud compute ssh "${_pg_vm}" \
+      --zone "${GCP_REGION}-a" --project "$GCP_PROJECT" \
+      --tunnel-through-iap --ssh-flag="-o ConnectTimeout=10" \
+      --command "sudo -u postgres psql -d app -c \"INSERT INTO daily_order_count (date, \\\"totalOrders\\\") SELECT \\\"placedAt\\\"::date, COUNT(*) FROM orders GROUP BY \\\"placedAt\\\"::date ON CONFLICT (date) DO UPDATE SET \\\"totalOrders\\\" = EXCLUDED.\\\"totalOrders\\\";\"" \
+      2>/dev/null \
+      && printf '  daily_order_count synced.\n' \
+      || printf '  (daily_order_count sync skipped — SSH unavailable)\n'
+  fi
 
   if [[ "$BACKEND_RUNTIME" != "gke" ]]; then
     _GKE_CLUSTER="${DEPLOY_MODE_PREFIX}-cluster"
@@ -1075,7 +1175,7 @@ printf '\nRemember to tear down when finished:\n'
 printf '  ./scripts/infra-down.sh\n'
 
 
-FRONTEND_DEPLOY="$(cd "$ROOT_DIR/../dashboard-frontend-gcp/scripts" 2>/dev/null && pwd || true)/deploy.sh"
+FRONTEND_DEPLOY="$(cd "$ROOT_DIR/../dashboard-frontend/scripts" 2>/dev/null && pwd || true)/deploy.sh"
 if [[ -f "$FRONTEND_DEPLOY" ]]; then
   _STEP="frontend deploy"
   printf '\n  Deploying frontend inline...\n'
@@ -1096,16 +1196,23 @@ if [[ "$_TARGET" == "remote" ]]; then
     fi
   }
 
-  _PG_LISTEN=$(gcloud compute ssh "${DEPLOY_MODE_PREFIX}-pg" \
-    --zone "${GCP_REGION}-a" --project "$GCP_PROJECT" \
-    --tunnel-through-iap --ssh-flag="-o ConnectTimeout=5" \
-    --command "sudo ss -tlnp 2>/dev/null | grep -c '0\.0\.0\.0:5432'" \
-    2>/dev/null || echo "0")
-  [[ "${_PG_LISTEN:-0}" -ge 1 ]] \
-    && _chk 1 "Postgres listening on VPC (0.0.0.0:5432)" 1 \
-    || _chk 1 "Postgres listening on VPC (0.0.0.0:5432)" 0 "stuck on localhost"
-
-  _chk 2 "Postgres password synced with Secret Manager" 1 "ran during deploy"
+  if [[ "$USE_NEON" == "true" ]]; then
+    _NEON_OK=$(psql "$NEON_DATABASE_URL" -t -c 'SELECT 1;' 2>/dev/null | tr -d ' \n' || echo "0")
+    [[ "$_NEON_OK" == "1" ]] \
+      && _chk 1 "Neon Postgres reachable" 1 \
+      || _chk 1 "Neon Postgres reachable" 0 "psql connection failed"
+    _chk 2 "Neon URL written to Secret Manager" 1 "ran during deploy"
+  else
+    _PG_LISTEN=$(gcloud compute ssh "${DEPLOY_MODE_PREFIX}-pg" \
+      --zone "${GCP_REGION}-a" --project "$GCP_PROJECT" \
+      --tunnel-through-iap --ssh-flag="-o ConnectTimeout=5" \
+      --command "sudo ss -tlnp 2>/dev/null | grep -c '0\.0\.0\.0:5432'" \
+      2>/dev/null || echo "0")
+    [[ "${_PG_LISTEN:-0}" -ge 1 ]] \
+      && _chk 1 "Postgres listening on VPC (0.0.0.0:5432)" 1 \
+      || _chk 1 "Postgres listening on VPC (0.0.0.0:5432)" 0 "stuck on localhost"
+    _chk 2 "Postgres password synced with Secret Manager" 1 "ran during deploy"
+  fi
 
   if [[ "$BACKEND_RUNTIME" == "gke" ]]; then
     _GKE_READY=$(kubectl get deployment "${_GKE_NS:-${DEPLOY_MODE_PREFIX}}-backend" \
