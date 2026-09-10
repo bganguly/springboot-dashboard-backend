@@ -119,20 +119,24 @@ if [[ "$_TARGET" == "remote" ]]; then
     printf '\n'
     printf '  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n'
     printf '  !!                                                        !!\n'
-    printf '  !!   FULL MODE SELECTED — THIS IS EXPENSIVE               !!\n'
-    printf '  !!                                                        !!\n'
     if [[ "$USE_NEON" == "true" ]]; then
+    printf '  !!   FULL MODE — 4M rows, Cloud Run + Neon               !!\n'
+    printf '  !!                                                        !!\n'
     printf '  !!   Backend:  Cloud Run (min-instances: 0)              !!\n'
     printf '  !!   DB:       Neon serverless Postgres (~$0/mo)         !!\n'
     printf '  !!   Cost est: ~$1-3/mo (Cloud Run only, Neon free tier) !!\n'
     elif [[ "$BACKEND_RUNTIME" == "gke" ]]; then
+    printf '  !!   FULL MODE — EXPENSIVE, TEAR DOWN WHEN DONE          !!\n'
+    printf '  !!                                                        !!\n'
     printf '  !!   Backend:  GKE (e2-standard-2 node, always-on)       !!\n'
     printf '  !!   DB:       n2-standard-4 Postgres VM (4 vCPU, 16 GB) !!\n'
-    printf '  !!   Cost est: ~$200-300/mo — TEAR DOWN WHEN DONE        !!\n'
+    printf '  !!   Cost est: ~$200-300/mo                              !!\n'
     else
+    printf '  !!   FULL MODE — EXPENSIVE, TEAR DOWN WHEN DONE          !!\n'
+    printf '  !!                                                        !!\n'
     printf '  !!   Backend:  Cloud Run (min-instances: 0)              !!\n'
     printf '  !!   DB:       n2-standard-4 Postgres VM (4 vCPU, 16 GB) !!\n'
-    printf '  !!   Cost est: ~$200-300/mo — TEAR DOWN WHEN DONE        !!\n'
+    printf '  !!   Cost est: ~$52/mo (GCE VM always-on)               !!\n'
     fi
     printf '  !!                                                        !!\n'
     printf '  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n'
