@@ -25,6 +25,7 @@ _GKE_NS=""
 _DB_ORDERS="0"
 _CP=0
 _CF=0
+_IMG_EXISTED=0
 _local_running=0
 _lite_count=0
 _full_count=0
@@ -487,7 +488,8 @@ _resolve_image() {
     --project "$GCP_PROJECT" 2>/dev/null | head -1 || true)
 
   if [[ -n "$exists" ]]; then
-    printf '  Image %s exists — skipping build.\n' "$tag"; return 0
+    printf '  Image %s exists — skipping build.\n' "$tag"
+    _IMG_EXISTED=1; return 0
   fi
 
   printf '\nBuilding and pushing:\n  %s\n' "$IMAGE"
@@ -1457,6 +1459,30 @@ _check_gcloud
 _resolve_gcp_config
 _resolve_image
 _check_adc
+
+if [[ "$_IMG_EXISTED" == "1" && "$BACKEND_RUNTIME" == "cr" && "$USE_NEON" == "true" ]]; then
+  DEPLOY_MODE_PREFIX=$([[ "$DEPLOY_MODE" == "lite" ]] && printf 'dash-lite' || printf 'dash-full')
+  _be_svc="${DEPLOY_MODE_PREFIX}-backend"
+  _deployed_img=$(gcloud run services describe "$_be_svc" \
+    --region "$GCP_REGION" --project "$GCP_PROJECT" \
+    --format="value(spec.template.spec.containers[0].image)" 2>/dev/null || true)
+  if [[ "$_deployed_img" == "$IMAGE" ]]; then
+    printf '  Cloud Run already serving %s — skipping Pulumi + seed.\n' "${IMAGE##*:}"
+    BACKEND_URL=$(gcloud run services describe "$_be_svc" \
+      --region "$GCP_REGION" --project "$GCP_PROJECT" \
+      --format="value(status.url)" 2>/dev/null || true)
+    _patch_frontend_backend_url
+    cd "$ROOT_DIR/infra"
+    _save_env_file
+    printf '\nBackend URL: %s\n' "$BACKEND_URL"
+    _update_readme
+    _deploy_frontend_inline
+    _post_deploy_checks
+    _warn_neon_storage
+    exit 0
+  fi
+fi
+
 _deploy_pulumi
 _setup_db_post_pulumi
 
