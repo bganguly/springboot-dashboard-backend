@@ -940,10 +940,61 @@ _ensure_schema_neon() {
   local script_dir migration_dir
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   migration_dir="${script_dir}/../src/main/resources/db/migration"
-  for f in $(ls "$migration_dir"/V*.sql | sort); do
+  for f in $(ls "$migration_dir"/V*.sql | sort -V); do
     printf '    %s\n' "$(basename "$f")"
     psql "$NEON_DATABASE_URL" -f "$f"
   done
+  printf '  Populating Flyway history so app startup does not re-apply...\n'
+  python3 - "$NEON_DATABASE_URL" "$migration_dir" <<'PYEOF'
+import sys, os, zlib, struct, subprocess, re, glob
+
+db_url  = sys.argv[1]
+mig_dir = sys.argv[2]
+
+files = sorted(glob.glob(os.path.join(mig_dir, 'V*.sql')))
+
+def flyway_crc32(path):
+    with open(path, 'rb') as fh:
+        data = fh.read().replace(b'\r\n', b'\n')
+    crc = zlib.crc32(data) & 0xFFFFFFFF
+    return struct.unpack('i', struct.pack('I', crc))[0]
+
+def parse(fname):
+    m = re.match(r'V(\d+(?:\.\d+)*)__(.+)\.sql$', fname)
+    return (m.group(1), m.group(2).replace('_', ' ')) if m else (None, None)
+
+create_sql = """
+CREATE TABLE IF NOT EXISTS flyway_schema_history (
+  installed_rank integer NOT NULL PRIMARY KEY,
+  version        varchar(50),
+  description    varchar(200) NOT NULL,
+  type           varchar(20)  NOT NULL,
+  script         varchar(1000) NOT NULL,
+  checksum       integer,
+  installed_by   varchar(100) NOT NULL,
+  installed_on   timestamp(6) NOT NULL DEFAULT now(),
+  execution_time integer NOT NULL,
+  success        boolean NOT NULL
+);
+CREATE INDEX IF NOT EXISTS flyway_schema_history_s_idx ON flyway_schema_history (success);
+"""
+subprocess.run(['psql', db_url, '-c', create_sql], check=True, capture_output=True)
+
+rows = []
+for rank, fpath in enumerate(files, 1):
+    fname = os.path.basename(fpath)
+    version, description = parse(fname)
+    if not version:
+        continue
+    rows.append(f"({rank},'{version}','{description}','SQL','{fname}',{flyway_crc32(fpath)},'deploy.sh',now(),0,true)")
+
+if rows:
+    sql = ("INSERT INTO flyway_schema_history "
+           "(installed_rank,version,description,type,script,checksum,installed_by,installed_on,execution_time,success) "
+           "VALUES " + ",".join(rows) + " ON CONFLICT DO NOTHING;")
+    subprocess.run(['psql', db_url, '-c', sql], check=True, capture_output=True)
+    print(f"  Flyway history: {len(rows)} migrations recorded.")
+PYEOF
   printf '  Schema ready.\n'
 }
 
