@@ -847,6 +847,22 @@ _check_db_row_count() {
   [[ "${_DB_ORDERS:-0}" =~ ^[0-9]+$ ]] || _DB_ORDERS="0"
 }
 
+_save_snapshot_to_gcs() {
+  command -v pg_dump >/dev/null 2>&1 || { printf '  pg_dump not found — skipping GCS snapshot.\n'; return 0; }
+  local gcs_token gcs_exists
+  gcs_token=$(gcloud auth print-access-token 2>/dev/null || true)
+  gcs_exists=$(_gcs_check "$gcs_token")
+  [[ "$gcs_exists" == "yes" ]] && return 0
+  printf '  Saving snapshot → GCS (%s)...\n' "$_GCS_BASENAME"
+  local tmp
+  tmp=$(mktemp /tmp/snap.XXXXXX.dump)
+  pg_dump --no-owner --no-privileges -Fc "$NEON_DATABASE_URL" -f "$tmp" 2>/dev/null \
+    || { rm -f "$tmp"; printf '  pg_dump failed — skipping.\n'; return 0; }
+  gsutil cp "$tmp" "$DEMO_SNAPSHOT_GCS_URI" 2>/dev/null \
+    || printf '  gsutil upload failed — snapshot not saved.\n'
+  rm -f "$tmp"
+}
+
 _seed_db() {
   if [[ "${_DB_ORDERS:-0}" -gt 0 ]]; then
     printf 'DB: %s orders\n' "$_DB_ORDERS"; return 0
@@ -859,6 +875,7 @@ _seed_db() {
   fi
   _check_db_row_count
   printf 'DB: %s orders after seed\n' "$_DB_ORDERS"
+  [[ "$USE_NEON" == "true" && "${_DB_ORDERS:-0}" -gt 0 ]] && _save_snapshot_to_gcs
 }
 
 _gcs_check() {
