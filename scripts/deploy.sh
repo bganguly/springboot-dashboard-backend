@@ -891,8 +891,11 @@ _save_snapshot_to_gcs() {
   printf '  Saving snapshot → GCS (%s)...\n' "$_GCS_BASENAME"
   local tmp
   tmp=$(mktemp /tmp/snap.XXXXXX)
-  pg_dump --no-owner --no-privileges -Fc "$NEON_DATABASE_URL" -f "$tmp" 2>/dev/null \
-    || { rm -f "$tmp"; printf '  pg_dump failed — skipping.\n'; return 0; }
+  local pg_dump_err
+  pg_dump_err=$(mktemp /tmp/pgdump-err.XXXXXX)
+  pg_dump --no-owner --no-privileges -Fc "$NEON_DATABASE_URL" -f "$tmp" 2>"$pg_dump_err" \
+    || { printf '  pg_dump failed: %s\n' "$(cat "$pg_dump_err")"; rm -f "$tmp" "$pg_dump_err"; return 0; }
+  rm -f "$pg_dump_err"
   gsutil cp "$tmp" "$DEMO_SNAPSHOT_GCS_URI" 2>/dev/null \
     || printf '  gsutil upload failed — snapshot not saved.\n'
   rm -f "$tmp"
