@@ -928,35 +928,7 @@ _save_snapshot_to_gcs() {
   gcs_exists=$(_gcs_check "$gcs_token")
   [[ "$gcs_exists" == "yes" ]] && return 0
   printf '  Saving snapshot → GCS (%s)...\n' "$_GCS_BASENAME"
-
-  local use_cloud_build=false
-  if command -v pg_dump >/dev/null 2>&1; then
-    local server_major local_major
-    server_major=$(psql "$NEON_DATABASE_URL" -t -c 'SHOW server_version;' 2>/dev/null | grep -oE '^[0-9]+' | head -1 || echo "0")
-    local_major=$(pg_dump --version 2>/dev/null | grep -oE '[0-9]+' | head -1 || echo "0")
-    if [[ "${local_major:-0}" -lt "${server_major:-0}" ]]; then
-      printf '  Local pg_dump %s < server %s — using Cloud Build.\n' "$local_major" "$server_major"
-      use_cloud_build=true
-    fi
-  else
-    printf '  No local pg_dump — using Cloud Build.\n'
-    use_cloud_build=true
-  fi
-
-  if [[ "$use_cloud_build" == "true" ]]; then
-    _save_snapshot_via_cloud_build
-    return 0
-  fi
-
-  local tmp pg_dump_err
-  tmp=$(mktemp /tmp/snap.XXXXXX)
-  pg_dump_err=$(mktemp /tmp/pgdump-err.XXXXXX)
-  pg_dump --no-owner --no-privileges -Fc "$NEON_DATABASE_URL" -f "$tmp" 2>"$pg_dump_err" \
-    || { printf '  pg_dump failed: %s\n' "$(cat "$pg_dump_err")"; rm -f "$tmp" "$pg_dump_err"; return 0; }
-  rm -f "$pg_dump_err"
-  gsutil cp "$tmp" "$DEMO_SNAPSHOT_GCS_URI" 2>/dev/null \
-    || printf '  gsutil upload failed — snapshot not saved.\n'
-  rm -f "$tmp"
+  _save_snapshot_via_cloud_build
 }
 
 _seed_db() {
