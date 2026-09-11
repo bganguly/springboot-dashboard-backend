@@ -1,6 +1,7 @@
 #!include:.gitignore
 !gradle/wrapper/gradle-wrapper.jar
 
+.git/
 scripts/
 infra/
 k8s/
