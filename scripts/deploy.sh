@@ -1473,10 +1473,11 @@ PYEOF
 _deploy_frontend_inline() {
   local fe_deploy="${ROOT_DIR}/../dashboard-frontend/scripts/deploy.sh"
   [[ -f "$fe_deploy" ]] || return 0
-  printf '\nContinue with inline frontend deployment? [Y/n]: '
+  printf '\nContinue with inline frontend deployment? [y/N]: '
   read -r _FE_CONTINUE
-  case "${_FE_CONTINUE:-Y}" in
-    [Nn]*) printf '  Skipping frontend deploy.\n'; return 0 ;;
+  case "${_FE_CONTINUE:-N}" in
+    [Yy]*) ;;
+    *) printf '  Skipping frontend deploy.\n'; return 0 ;;
   esac
   _STEP="frontend deploy"
   printf '\n  Deploying frontend inline...\n'
