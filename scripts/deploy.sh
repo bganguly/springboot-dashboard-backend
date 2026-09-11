@@ -644,6 +644,27 @@ for r in json.load(sys.stdin).get('deployment',{}).get('resources',[]):
     fi
   fi
 
+  if grep -qE "secrets/[^/]+/versions/latest was not found" "$log_file" 2>/dev/null; then
+    local missing_secret
+    missing_secret=$(grep -oE "secrets/[^/]+/versions/latest" "$log_file" \
+      | head -1 | cut -d/ -f2)
+    if [[ -n "$missing_secret" && -n "${NEON_DATABASE_URL:-}" ]]; then
+      printf '[deploy] Secret %s has no live version — adding Neon URL and retrying...\n' "$missing_secret" >&2
+      printf '%s' "$NEON_DATABASE_URL" | gcloud secrets versions add "$missing_secret" \
+        --data-file=- --project="$GCP_PROJECT"
+      local sv_urn
+      sv_urn=$(pulumi stack export 2>/dev/null | python3 -c "
+import sys, json
+for r in json.load(sys.stdin).get('deployment',{}).get('resources',[]):
+    urn = r.get('urn','')
+    if 'SecretVersion' in urn and 'database-url-v1' in urn:
+        print(urn); break
+" 2>/dev/null || true)
+      [[ -n "$sv_urn" ]] && pulumi state delete "$sv_urn" --yes 2>/dev/null || true
+      return 0
+    fi
+  fi
+
   printf '\n[deploy] pulumi up failed — actual errors:\n' >&2
   grep -E 'error:|Error|failed|FAIL' "$log_file" | head -20 >&2 || true
   if grep -q 'cloudrunv2\|Cloud Run\|container failed to start' "$log_file" 2>/dev/null; then
@@ -716,9 +737,10 @@ _ensure_neon_secret_version() {
 
   # If latest version already exists, Cloud Run can mount it — nothing to do
   local existing
-  existing=$(gcloud secrets versions access latest \
-    --secret="$secret_name" --project="$GCP_PROJECT" 2>/dev/null || true)
-  [[ -n "$existing" ]] && { printf '  Neon secret version present.\n'; return 0; }
+  if existing=$(gcloud secrets versions access latest \
+    --secret="$secret_name" --project="$GCP_PROJECT" 2>/dev/null) && [[ -n "$existing" ]]; then
+    printf '  Neon secret version present.\n'; return 0
+  fi
 
   # Secret exists but has no versions (state drift from GCE→Neon switch or failed prior run)
   # Add the version directly so Cloud Run can mount it before pulumi up touches the service
