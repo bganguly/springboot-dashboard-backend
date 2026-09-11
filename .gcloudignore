@@ -1,2 +1,10 @@
 #!include:.gitignore
 !gradle/wrapper/gradle-wrapper.jar
+
+scripts/
+infra/
+k8s/
+README.md
+CLAUDE.md
+backend.log
+cloudbuild-gke.yaml
