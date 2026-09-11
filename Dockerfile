@@ -1,4 +1,4 @@
-FROM eclipse-temurin:21-jdk-alpine AS builder
+FROM eclipse-temurin:21-jdk-alpine@sha256:dfb58f010fc58c48069b670a924b8f08a99672932d37ec8c7e839a52c7e3226c AS builder
 WORKDIR /app
 COPY gradlew gradlew.bat* ./
 COPY gradle/ gradle/
@@ -7,7 +7,7 @@ RUN ./gradlew dependencies --no-daemon -q
 COPY src/ src/
 RUN ./gradlew bootJar --no-daemon -q
 
-FROM eclipse-temurin:21-jre-alpine AS runner
+FROM eclipse-temurin:21-jre-alpine@sha256:4cbffea0432e0209a002c816a9fad6557d83147e56d5df6a73cdeec3c03ea522 AS runner
 WORKDIR /app
 RUN addgroup -S app && adduser -S app -G app && apk add --no-cache netcat-openbsd
 COPY --from=builder /app/build/libs/*.jar app.jar
