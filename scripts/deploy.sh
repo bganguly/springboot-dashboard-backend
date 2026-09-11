@@ -471,12 +471,7 @@ _resolve_image() {
     --filter="name:artifactregistry.googleapis.com" --format="value(state)" 2>/dev/null || true)
   [[ "$ar_state" != "ENABLED" ]] && gcloud services enable artifactregistry.googleapis.com --project="$GCP_PROJECT"
 
-  printf '  Resolving Artifact Registry repo...\n'
-  local listed registry
-  listed=$(gcloud artifacts repositories list --project="$GCP_PROJECT" \
-    --location="$GCP_REGION" --format="value(name)" 2>/dev/null | head -1 || true)
-  listed="${listed##*/}"
-  registry="${listed:-${ARTIFACT_REGISTRY:-${GCP_PROJECT}-gradle}}"
+  local registry="${DEPLOY_MODE_PREFIX}-repo"
 
   if ! gcloud artifacts repositories describe "$registry" \
       --project="$GCP_PROJECT" --location="$GCP_REGION" >/dev/null 2>&1; then
