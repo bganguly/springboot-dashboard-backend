@@ -29,10 +29,12 @@ public class DataSourceConfig {
         int colonIdx = userInfo.indexOf(':');
         String user     = userInfo.substring(0, colonIdx);
         String password = userInfo.substring(colonIdx + 1);
-        // Cloud SQL uses GOOGLE_MANAGED_INTERNAL_CA; disable SSL to avoid handshake
-        // failure (safe on private IP inside a VPC).
-        String jdbcUrl = "jdbc:postgresql://" + hostAndDb
-                + (hostAndDb.contains("?") ? "&" : "?") + "sslmode=disable";
+        // Preserve sslmode from URL if present (e.g. Neon requires sslmode=require).
+        // Only default to sslmode=disable for GCE Postgres on private VPC.
+        String jdbcUrl = "jdbc:postgresql://" + hostAndDb;
+        if (!hostAndDb.contains("sslmode=")) {
+            jdbcUrl += (hostAndDb.contains("?") ? "&" : "?") + "sslmode=disable";
+        }
         log.info("DataSource: jdbc:postgresql://{} user={}", hostAndDb, user);
         var config = new HikariConfig();
         config.setJdbcUrl(jdbcUrl);
@@ -41,6 +43,7 @@ public class DataSourceConfig {
         config.setMaximumPoolSize(10);
         config.setMinimumIdle(2);
         config.setConnectionTimeout(30_000);
+        config.setInitializationFailTimeout(-1);
         return new HikariDataSource(config);
     }
 }
