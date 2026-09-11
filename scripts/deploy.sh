@@ -114,7 +114,7 @@ except Exception:
     print('cr')
 " 2>/dev/null || echo "cr")
   if [[ "$existing" == "gke" ]]; then
-    printf '\n  Backend: currently GKE (~$22/mo). Switch to Cloud Run (scales to zero)? [y/N — default keep gke]: '
+    printf '\n  Backend: currently GKE (~$22/mo). Switch to Cloud Run (scales to zero)? [y/N]: '
     read -r _BR
     case "${_BR:-N}" in
       [Yy]*) BACKEND_RUNTIME="cr"  ;;
@@ -168,7 +168,7 @@ _prompt_database_backend() {
   printf '\n  Database backend:\n'
   printf '  [Y] Neon serverless Postgres  — free tier, auto-suspends when idle (~$0/mo)\n'
   printf '  [N] GCE Postgres VM           — always-on, ~$52/mo at current GCP rates\n'
-  printf '\nUse Neon? [Y/n, default Y]: '
+  printf '\nUse Neon? [Y/n]: '
   read -r _NEON
   case "${_NEON:-Y}" in
     [Nn]*) USE_NEON="false" ;;
