@@ -946,14 +946,23 @@ _seed_neon() {
 }
 
 _ensure_schema_neon() {
-  local table_exists
-  table_exists=$(psql "$NEON_DATABASE_URL" -t -c \
-    "SELECT to_regclass('public.orders');" 2>/dev/null | tr -d ' \n')
-  [[ "$table_exists" != "" && "$table_exists" != "NULL" ]] && return 0
-  printf '  Schema absent — applying Flyway migrations...\n'
+  local t1 t2
+  t1=$(psql "$NEON_DATABASE_URL" -t -c "SELECT to_regclass('public.orders');"     2>/dev/null | tr -d ' \n')
+  t2=$(psql "$NEON_DATABASE_URL" -t -c "SELECT to_regclass('public.order_items');" 2>/dev/null | tr -d ' \n')
   local script_dir migration_dir
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   migration_dir="${script_dir}/../src/main/resources/db/migration"
+  if [[ "$t1" != "" && "$t1" != "NULL" && "$t2" != "" && "$t2" != "NULL" ]]; then
+    local mig_count expected_count
+    mig_count=$(psql "$NEON_DATABASE_URL" -t -c \
+      "SELECT COUNT(*) FROM flyway_schema_history WHERE success=true;" 2>/dev/null | tr -d ' \n' || printf '0')
+    expected_count=$(ls "$migration_dir"/V*.sql | wc -l | tr -d ' \n')
+    [[ "$mig_count" == "$expected_count" ]] && return 0
+    printf '  Flyway history incomplete (%s/%s) — wiping and reapplying.\n' "$mig_count" "$expected_count"
+  else
+    printf '  Schema absent or incomplete — wiping and reapplying.\n'
+  fi
+  psql "$NEON_DATABASE_URL" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" 2>/dev/null || true
   for f in $(ls "$migration_dir"/V*.sql | sort -V); do
     printf '    %s\n' "$(basename "$f")"
     psql "$NEON_DATABASE_URL" -f "$f"
