@@ -471,7 +471,8 @@ _resolve_image() {
     --filter="name:artifactregistry.googleapis.com" --format="value(state)" 2>/dev/null || true)
   [[ "$ar_state" != "ENABLED" ]] && gcloud services enable artifactregistry.googleapis.com --project="$GCP_PROJECT"
 
-  local registry="${DEPLOY_MODE_PREFIX}-repo"
+  local _prefix; _prefix=$([[ "$DEPLOY_MODE" == "lite" ]] && printf 'dash-lite' || printf 'dash-full')
+  local registry="${_prefix}-repo"
 
   if ! gcloud artifacts repositories describe "$registry" \
       --project="$GCP_PROJECT" --location="$GCP_REGION" >/dev/null 2>&1; then
