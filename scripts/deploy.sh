@@ -860,20 +860,9 @@ _resolve_snapshot_vars() {
 _preflight_db() {
   [[ "$USE_NEON" != "true" || "$_TARGET" != "remote" ]] && return 0
   [[ -z "${NEON_DATABASE_URL:-}" ]] && return 0
-  printf 'DB preflight...\n'
   local conn_ok
   conn_ok=$(psql "$NEON_DATABASE_URL" -t -c 'SELECT 1;' 2>/dev/null | tr -d ' \n' || printf '')
-  if [[ "$conn_ok" != "1" ]]; then
-    printf '  FATAL: cannot connect to Neon — check NEON_DATABASE_URL\n'; exit 1
-  fi
-  local schema_ok
-  schema_ok=$(psql "$NEON_DATABASE_URL" -t -c "SELECT to_regclass('public.orders');" 2>/dev/null | tr -d ' \n' || printf '')
-  if [[ -z "$schema_ok" || "$schema_ok" == "NULL" ]]; then
-    printf '  Schema absent — migrations will run before seeding.\n'
-    return 0
-  fi
-  _check_db_row_count
-  printf '  DB OK: %s orders\n' "$_DB_ORDERS"
+  [[ "$conn_ok" == "1" ]] || { printf 'FATAL: cannot connect to Neon — check NEON_DATABASE_URL\n'; exit 1; }
 }
 
 _check_db_row_count() {
