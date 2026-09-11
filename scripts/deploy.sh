@@ -1396,3 +1396,21 @@ _deploy_frontend_inline
 printf '\nRemember to tear down when finished:\n  ./scripts/infra-down.sh\n'
 
 _post_deploy_checks
+
+_warn_neon_storage() {
+  [[ "$USE_NEON" != "true" ]] && return 0
+  local size_mb
+  size_mb=$(psql "$NEON_DATABASE_URL" -t -c \
+    "SELECT round(pg_database_size(current_database()) / 1024.0 / 1024.0);" \
+    2>/dev/null | tr -d ' \n')
+  [[ "${size_mb:-0}" =~ ^[0-9]+$ ]] || size_mb=0
+  printf '\nNeon storage: ~%s MB / 512 MB free-tier cap\n' "$size_mb"
+  if [[ "$size_mb" -gt 400 ]]; then
+    printf 'WARNING: approaching 512 MB limit — consider one of:\n'
+    printf '  1. Truncate to ~250K orders:\n'
+    printf '       psql "$NEON_DATABASE_URL" -v orders=250000 -f scripts/seed-large.sql\n'
+    printf '  2. Tear down entirely:\n'
+    printf '       ./scripts/infra-down.sh\n'
+  fi
+}
+_warn_neon_storage
