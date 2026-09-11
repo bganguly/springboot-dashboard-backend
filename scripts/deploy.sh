@@ -721,18 +721,23 @@ _ensure_neon_secret_version() {
   }
 
   local existing
-  if existing=$(gcloud secrets versions access latest \
-    --secret="$secret_name" --project="$GCP_PROJECT" 2>/dev/null) && [[ -n "$existing" ]]; then
+  existing=$(gcloud secrets versions access latest \
+    --secret="$secret_name" --project="$GCP_PROJECT" 2>/dev/null || true)
+
+  if [[ -n "$existing" && "$existing" == "$NEON_DATABASE_URL" ]]; then
+    printf '  Neon secret already up to date.\n'
     return 0
   fi
 
-  # Secret exists but has no versions (state drift from GCE→Neon switch or failed prior run)
-  # Add the version directly so Cloud Run can mount it before pulumi up touches the service
-  printf '  Secret has no versions (state drift) — adding Neon URL now...\n'
+  if [[ -n "$existing" ]]; then
+    printf '  Neon secret URL changed — adding new version...\n'
+  else
+    printf '  Secret has no versions (state drift) — adding Neon URL now...\n'
+  fi
+
   printf '%s' "$NEON_DATABASE_URL" | gcloud secrets versions add "$secret_name" \
     --data-file=- --project="$GCP_PROJECT"
 
-  # Remove stale SecretVersion from Pulumi state so it gets cleanly re-imported on this run
   local sv_urn
   sv_urn=$(pulumi stack export 2>/dev/null | python3 -c "
 import sys, json
@@ -742,7 +747,7 @@ for r in json.load(sys.stdin).get('deployment',{}).get('resources',[]):
         print(urn); break
 " 2>/dev/null || true)
   [[ -n "$sv_urn" ]] && pulumi state delete "$sv_urn" --yes 2>/dev/null || true
-  printf '  Secret version restored — pulumi up will re-import.\n'
+  printf '  Secret version updated — pulumi up will re-import.\n'
 }
 
 _deploy_pulumi() {
@@ -882,16 +887,69 @@ _check_db_row_count() {
   [[ "${_DB_ORDERS:-0}" =~ ^[0-9]+$ ]] || _DB_ORDERS="0"
 }
 
+_save_snapshot_via_cloud_build() {
+  local secret_name="${DEPLOY_MODE_PREFIX}-database-url"
+  local project_number
+  project_number=$(gcloud projects describe "$GCP_PROJECT" --format 'value(projectNumber)' 2>/dev/null || true)
+  if [[ -n "$project_number" ]]; then
+    gcloud secrets add-iam-policy-binding "$secret_name" \
+      --project="$GCP_PROJECT" \
+      --member="serviceAccount:${project_number}@cloudbuild.gserviceaccount.com" \
+      --role="roles/secretmanager.secretAccessor" \
+      --condition=None >/dev/null 2>&1 || true
+  fi
+  local cb_yaml
+  cb_yaml=$(mktemp /tmp/cb.XXXXXX.yaml)
+  cat > "$cb_yaml" <<CBEOF
+steps:
+  - name: 'postgres:18'
+    entrypoint: sh
+    args:
+      - '-c'
+      - 'pg_dump --no-owner --no-privileges -Fc "\$\$NEON_URL" -f /workspace/snap.dump && echo "dump size: \$(wc -c < /workspace/snap.dump) bytes"'
+    secretEnv: ['NEON_URL']
+  - name: 'gcr.io/cloud-builders/gsutil'
+    args: ['cp', '/workspace/snap.dump', '${DEMO_SNAPSHOT_GCS_URI}']
+availableSecrets:
+  secretManager:
+    - versionName: 'projects/${GCP_PROJECT}/secrets/${secret_name}/versions/latest'
+      env: 'NEON_URL'
+CBEOF
+  printf '  Submitting Cloud Build pg_dump job (postgres:18 → GCS)...\n'
+  gcloud builds submit --no-source --project="$GCP_PROJECT" --config "$cb_yaml" \
+    && printf '  Cloud Build dump complete.\n' \
+    || printf '  Cloud Build dump failed — snapshot not saved.\n'
+  rm -f "$cb_yaml"
+}
+
 _save_snapshot_to_gcs() {
-  command -v pg_dump >/dev/null 2>&1 || { printf '  pg_dump not found — skipping GCS snapshot.\n'; return 0; }
   local gcs_token gcs_exists
   gcs_token=$(gcloud auth print-access-token 2>/dev/null || true)
   gcs_exists=$(_gcs_check "$gcs_token")
   [[ "$gcs_exists" == "yes" ]] && return 0
   printf '  Saving snapshot → GCS (%s)...\n' "$_GCS_BASENAME"
-  local tmp
+
+  local use_cloud_build=false
+  if command -v pg_dump >/dev/null 2>&1; then
+    local server_major local_major
+    server_major=$(psql "$NEON_DATABASE_URL" -t -c 'SHOW server_version;' 2>/dev/null | grep -oE '^[0-9]+' | head -1 || echo "0")
+    local_major=$(pg_dump --version 2>/dev/null | grep -oE '[0-9]+' | head -1 || echo "0")
+    if [[ "${local_major:-0}" -lt "${server_major:-0}" ]]; then
+      printf '  Local pg_dump %s < server %s — using Cloud Build.\n' "$local_major" "$server_major"
+      use_cloud_build=true
+    fi
+  else
+    printf '  No local pg_dump — using Cloud Build.\n'
+    use_cloud_build=true
+  fi
+
+  if [[ "$use_cloud_build" == "true" ]]; then
+    _save_snapshot_via_cloud_build
+    return 0
+  fi
+
+  local tmp pg_dump_err
   tmp=$(mktemp /tmp/snap.XXXXXX)
-  local pg_dump_err
   pg_dump_err=$(mktemp /tmp/pgdump-err.XXXXXX)
   pg_dump --no-owner --no-privileges -Fc "$NEON_DATABASE_URL" -f "$tmp" 2>"$pg_dump_err" \
     || { printf '  pg_dump failed: %s\n' "$(cat "$pg_dump_err")"; rm -f "$tmp" "$pg_dump_err"; return 0; }

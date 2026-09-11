@@ -193,7 +193,7 @@ if (backendRuntime !== "gke") {
             valueSource: {
               secretKeyRef: {
                 secret: dbUrlSecret.secretId,
-                version: dbUrlSecretVersion?.version ?? "latest",
+                version: "latest",
               },
             },
           },

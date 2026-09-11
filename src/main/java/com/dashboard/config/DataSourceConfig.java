@@ -35,6 +35,9 @@ public class DataSourceConfig {
         if (!hostAndDb.contains("sslmode=")) {
             jdbcUrl += (hostAndDb.contains("?") ? "&" : "?") + "sslmode=disable";
         }
+        if (!hostAndDb.contains("currentSchema=") && !hostAndDb.contains("search_path=")) {
+            jdbcUrl += "&currentSchema=public";
+        }
         log.info("DataSource: jdbc:postgresql://{} user={}", hostAndDb, user);
         var config = new HikariConfig();
         config.setJdbcUrl(jdbcUrl);
