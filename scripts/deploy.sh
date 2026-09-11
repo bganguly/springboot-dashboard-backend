@@ -705,6 +705,40 @@ PYAML
   fi
 }
 
+_ensure_neon_secret_version() {
+  [[ "$USE_NEON" != "true" ]] && return 0
+  local secret_name="${DEPLOY_MODE_PREFIX}-database-url"
+
+  # Secret may not exist yet on first deploy — pulumi up will create it with the version
+  gcloud secrets describe "$secret_name" --project="$GCP_PROJECT" >/dev/null 2>&1 || {
+    printf '  Neon secret not yet created — pulumi up will provision it.\n'; return 0
+  }
+
+  # If latest version already exists, Cloud Run can mount it — nothing to do
+  local existing
+  existing=$(gcloud secrets versions access latest \
+    --secret="$secret_name" --project="$GCP_PROJECT" 2>/dev/null || true)
+  [[ -n "$existing" ]] && { printf '  Neon secret version present.\n'; return 0; }
+
+  # Secret exists but has no versions (state drift from GCE→Neon switch or failed prior run)
+  # Add the version directly so Cloud Run can mount it before pulumi up touches the service
+  printf '  Secret has no versions (state drift) — adding Neon URL now...\n'
+  printf '%s' "$NEON_DATABASE_URL" | gcloud secrets versions add "$secret_name" \
+    --data-file=- --project="$GCP_PROJECT"
+
+  # Remove stale SecretVersion from Pulumi state so it gets cleanly re-imported on this run
+  local sv_urn
+  sv_urn=$(pulumi stack export 2>/dev/null | python3 -c "
+import sys, json
+for r in json.load(sys.stdin).get('deployment',{}).get('resources',[]):
+    urn = r.get('urn','')
+    if 'SecretVersion' in urn and 'database-url-v1' in urn:
+        print(urn); break
+" 2>/dev/null || true)
+  [[ -n "$sv_urn" ]] && pulumi state delete "$sv_urn" --yes 2>/dev/null || true
+  printf '  Secret version restored — pulumi up will re-import.\n'
+}
+
 _deploy_pulumi() {
   printf '\n=== deploying via Pulumi ===\n'
   cd "$ROOT_DIR/infra"
@@ -716,6 +750,7 @@ _deploy_pulumi() {
     printf '  Storing Neon DATABASE_URL as Pulumi config secret...\n'
     pulumi config set --secret dashboard:neonDatabaseUrl "$NEON_DATABASE_URL" --stack "$DEPLOY_MODE"
   fi
+  _ensure_neon_secret_version
   _STEP="pulumi up"
   _pulumi_up_robust
 }
