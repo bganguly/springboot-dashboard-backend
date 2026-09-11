@@ -132,6 +132,32 @@ except Exception:
 
 _prompt_database_backend() {
   [[ "$_TARGET" != "remote" ]] && return 0
+
+  local env_file="$ROOT_DIR/.env.gcp.${DEPLOY_MODE}"
+  local saved_neon_url="" saved_use_neon=""
+  if [[ -f "$env_file" ]]; then
+    saved_use_neon=$(grep -E '^USE_NEON=' "$env_file" | cut -d= -f2- | tr -d '"' || true)
+    saved_neon_url=$(grep -E '^NEON_DATABASE_URL=' "$env_file" | cut -d= -f2- | tr -d '"' || true)
+  fi
+
+  if [[ -n "$saved_use_neon" ]]; then
+    USE_NEON="$saved_use_neon"
+    NEON_DATABASE_URL="$saved_neon_url"
+    local db_label
+    if [[ "$USE_NEON" == "true" ]]; then
+      db_label="Neon (${NEON_DATABASE_URL:0:40}...)"
+    else
+      db_label="GCE Postgres VM"
+    fi
+    printf '\n  Database: %s  [saved — press Enter to keep, or type a new URL to replace]\n  > ' "$db_label"
+    read -r _NEW_URL
+    if [[ -n "$_NEW_URL" ]]; then
+      NEON_DATABASE_URL="$_NEW_URL"
+      USE_NEON="true"
+    fi
+    return 0
+  fi
+
   printf '\n  Database backend:\n'
   printf '  [Y] Neon serverless Postgres  — free tier, auto-suspends when idle (~$0/mo)\n'
   printf '  [N] GCE Postgres VM           — always-on, ~$52/mo at current GCP rates\n'
@@ -1135,6 +1161,8 @@ ARTIFACT_REGISTRY=$(pulumi stack output artifactRegistry 2>/dev/null || true)
 CLOUD_RUN_URL=${BACKEND_URL}
 GCP_PROJECT=${GCP_PROJECT}
 GCP_REGION=${GCP_REGION}
+USE_NEON=${USE_NEON}
+NEON_DATABASE_URL=${NEON_DATABASE_URL}
 EOF
 }
 
