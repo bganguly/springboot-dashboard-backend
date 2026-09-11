@@ -423,14 +423,35 @@ _cloudbuild_submit() {
     gcloud projects add-iam-policy-binding "$project" \
       --member="user:${ACTIVE_ACCOUNT}" --role="roles/cloudbuild.builds.editor" --quiet
   fi
+  local cache_tag tmpyaml
+  cache_tag="${tag%:*}:cache"
+  tmpyaml=$(mktemp /tmp/cloudbuild.XXXXXX.yaml)
+  cat > "$tmpyaml" <<YAML
+steps:
+- name: 'gcr.io/cloud-builders/docker'
+  entrypoint: bash
+  args:
+  - -c
+  - |
+    docker pull '${cache_tag}' 2>/dev/null || true
+    docker build --cache-from '${cache_tag}' -t '${tag}' -t '${cache_tag}' .
+- name: 'gcr.io/cloud-builders/docker'
+  args: [push, '${tag}']
+- name: 'gcr.io/cloud-builders/docker'
+  args: [push, '${cache_tag}']
+images:
+- '${tag}'
+- '${cache_tag}'
+YAML
   local attempt=0 rc
   while (( attempt < 3 )); do
     attempt=$(( attempt + 1 ))
-    set +e; gcloud builds submit --tag "$tag" --project "$project" "$srcdir"; rc=$?; set -e
-    [[ "$rc" == "0" ]] && return 0
-    [[ "$rc" == "130" ]] && { printf '\n[deploy] Build cancelled.\n'; exit 130; }
+    set +e; gcloud builds submit --config "$tmpyaml" --project "$project" "$srcdir"; rc=$?; set -e
+    [[ "$rc" == "0" ]] && { rm -f "$tmpyaml"; return 0; }
+    [[ "$rc" == "130" ]] && { printf '\n[deploy] Build cancelled.\n'; rm -f "$tmpyaml"; exit 130; }
     (( attempt < 3 )) && { printf '  Cloud Build failed (attempt %d/3) — waiting 20s...\n' "$attempt"; sleep 20; }
   done
+  rm -f "$tmpyaml"
   printf '[deploy] Cloud Build failed after 3 attempts.\n' >&2; return 1
 }
 
