@@ -149,12 +149,19 @@ _prompt_database_backend() {
     else
       db_label="GCE Postgres VM"
     fi
-    printf '\n  Database: %s  [saved — press Enter to keep, or type a new URL to replace]\n  > ' "$db_label"
-    read -r _NEW_URL
-    if [[ -n "$_NEW_URL" ]]; then
-      NEON_DATABASE_URL="$_NEW_URL"
-      USE_NEON="true"
-    fi
+    printf '\n  Database: %s  [cached — using saved URL]\n' "$db_label"
+    printf '  Replace? [y/N]: '
+    read -r _REPLACE
+    case "${_REPLACE:-N}" in
+      [Yy]*)
+        printf '  Enter new Neon DATABASE_URL\n  > '
+        read -r _NEW_URL
+        if [[ -n "$_NEW_URL" ]]; then
+          NEON_DATABASE_URL="$_NEW_URL"
+          USE_NEON="true"
+        fi
+        ;;
+    esac
     return 0
   fi
 
