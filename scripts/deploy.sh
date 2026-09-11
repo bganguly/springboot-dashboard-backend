@@ -875,7 +875,6 @@ _seed_db() {
   fi
   _check_db_row_count
   printf 'DB: %s orders after seed\n' "$_DB_ORDERS"
-  [[ "$USE_NEON" == "true" && "${_DB_ORDERS:-0}" -gt 0 ]] && _save_snapshot_to_gcs
 }
 
 _gcs_check() {
@@ -1375,6 +1374,7 @@ _setup_db_post_pulumi
 _resolve_snapshot_vars
 _check_db_row_count
 _seed_db
+[[ "$USE_NEON" == "true" && "${_DB_ORDERS:-0}" -gt 0 ]] && _save_snapshot_to_gcs
 _sync_daily_order_count
 
 _scale_down_gke_if_switching
