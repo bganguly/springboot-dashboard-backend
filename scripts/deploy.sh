@@ -652,15 +652,6 @@ for r in json.load(sys.stdin).get('deployment',{}).get('resources',[]):
       printf '[deploy] Secret %s has no live version — adding Neon URL and retrying...\n' "$missing_secret" >&2
       printf '%s' "$NEON_DATABASE_URL" | gcloud secrets versions add "$missing_secret" \
         --data-file=- --project="$GCP_PROJECT"
-      local sv_urn
-      sv_urn=$(pulumi stack export 2>/dev/null | python3 -c "
-import sys, json
-for r in json.load(sys.stdin).get('deployment',{}).get('resources',[]):
-    urn = r.get('urn','')
-    if 'SecretVersion' in urn and 'database-url-v1' in urn:
-        print(urn); break
-" 2>/dev/null || true)
-      [[ -n "$sv_urn" ]] && pulumi state delete "$sv_urn" --yes 2>/dev/null || true
       return 0
     fi
   fi
