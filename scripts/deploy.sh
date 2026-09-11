@@ -901,7 +901,7 @@ _seed_neon() {
       "https://storage.googleapis.com/storage/v1/b/bikram-java-dash-snapshots/o/dash%2F${_GCS_BASENAME}?alt=media" \
       -H "Authorization: Bearer ${gcs_token}" -o "$tmp"
   else
-    _download_from_s3_local "$tmp" || { rm -f "$tmp"; return 0; }
+    _download_from_s3_local "$tmp" || { rm -f "$tmp"; _seed_neon_sql; return 0; }
   fi
   if [[ -s "$tmp" ]]; then
     printf '  Running pg_restore against Neon...\n'
@@ -909,6 +909,15 @@ _seed_neon() {
     rm -f "$tmp"
     printf 'Seeding complete.\n'
   fi
+}
+
+_seed_neon_sql() {
+  local orders
+  orders=$([[ "$DEPLOY_MODE" == "lite" ]] && printf '100000' || printf '4000000')
+  printf '  No GCS/S3 snapshot — seeding %s orders via seed-large.sql (this takes several minutes)...\n' "$orders"
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  psql "$NEON_DATABASE_URL" -v "orders=${orders}" -f "${script_dir}/seed-large.sql"
 }
 
 _download_from_s3_local() {
