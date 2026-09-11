@@ -221,7 +221,7 @@ if (backendRuntime !== "gke") {
         },
       }),
     },
-  }, { dependsOn: crDeps });
+  }, { dependsOn: crDeps, customTimeouts: { create: "45m", update: "45m" } });
 
   new gcp.cloudrunv2.ServiceIamMember("backend-public", {
     project,
