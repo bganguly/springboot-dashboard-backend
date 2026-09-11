@@ -1209,6 +1209,29 @@ except Exception: pass
   fi
 }
 
+_save_user_inputs() {
+  [[ "$_TARGET" != "remote" ]] && return 0
+  local env_file="$ROOT_DIR/.env.gcp.${DEPLOY_MODE}"
+  local existing_db_vm_ip="" existing_artifact_registry="" existing_cloud_run_url=""
+  local existing_gcp_project="" existing_gcp_region=""
+  if [[ -f "$env_file" ]]; then
+    existing_db_vm_ip=$(grep -E '^DB_VM_IP=' "$env_file" | cut -d= -f2- || true)
+    existing_artifact_registry=$(grep -E '^ARTIFACT_REGISTRY=' "$env_file" | cut -d= -f2- || true)
+    existing_cloud_run_url=$(grep -E '^CLOUD_RUN_URL=' "$env_file" | cut -d= -f2- || true)
+    existing_gcp_project=$(grep -E '^GCP_PROJECT=' "$env_file" | cut -d= -f2- || true)
+    existing_gcp_region=$(grep -E '^GCP_REGION=' "$env_file" | cut -d= -f2- || true)
+  fi
+  cat > "$env_file" <<EOF
+DB_VM_IP=${existing_db_vm_ip}
+ARTIFACT_REGISTRY=${existing_artifact_registry}
+CLOUD_RUN_URL=${existing_cloud_run_url}
+GCP_PROJECT=${existing_gcp_project:-${GCP_PROJECT}}
+GCP_REGION=${existing_gcp_region:-${GCP_REGION}}
+USE_NEON=${USE_NEON}
+NEON_DATABASE_URL=${NEON_DATABASE_URL}
+EOF
+}
+
 _save_env_file() {
   local env_file="$ROOT_DIR/.env.gcp.${DEPLOY_MODE}"
   cat > "$env_file" <<EOF
@@ -1353,6 +1376,7 @@ _run_preflight
 _prompt_menu
 _prompt_backend_runtime
 _prompt_database_backend
+_save_user_inputs
 _print_cost_summary
 
 [[ "$_TARGET" == "local" ]] && _deploy_local
