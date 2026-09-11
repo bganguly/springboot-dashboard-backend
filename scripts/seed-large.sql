@@ -8,8 +8,8 @@
 \set regions 50
 \set batch_size 500000
 \set summary_days 30
-\set summary_cats 10
-\set summary_regions 10
+\set summary_cats 200
+\set summary_regions 50
 
 \echo Truncating existing data...
 TRUNCATE order_items, orders, daily_summary, products, customers, categories, regions RESTART IDENTITY CASCADE;
