@@ -892,11 +892,19 @@ _save_snapshot_via_cloud_build() {
   local project_number
   project_number=$(gcloud projects describe "$GCP_PROJECT" --format 'value(projectNumber)' 2>/dev/null || true)
   if [[ -n "$project_number" ]]; then
-    gcloud secrets add-iam-policy-binding "$secret_name" \
-      --project="$GCP_PROJECT" \
-      --member="serviceAccount:${project_number}@cloudbuild.gserviceaccount.com" \
-      --role="roles/secretmanager.secretAccessor" \
-      --condition=None >/dev/null 2>&1 || true
+    local cb_sa="${project_number}@cloudbuild.gserviceaccount.com"
+    local already_bound
+    already_bound=$(gcloud secrets get-iam-policy "$secret_name" --project="$GCP_PROJECT" \
+      --format='value(bindings.members)' 2>/dev/null | grep -c "$cb_sa" || true)
+    if [[ "$already_bound" -eq 0 ]]; then
+      gcloud secrets add-iam-policy-binding "$secret_name" \
+        --project="$GCP_PROJECT" \
+        --member="serviceAccount:${cb_sa}" \
+        --role="roles/secretmanager.secretAccessor" \
+        --condition=None >/dev/null 2>&1 || true
+      printf '  Waiting for IAM propagation...\n'
+      sleep 30
+    fi
   fi
   local cb_yaml
   cb_yaml=$(mktemp /tmp/cb.XXXXXX.yaml)
