@@ -3,7 +3,9 @@ WORKDIR /app
 COPY gradlew gradlew.bat* ./
 COPY gradle/ gradle/
 COPY build.gradle.kts settings.gradle.kts ./
-RUN ./gradlew dependencies --no-daemon -q
+RUN ./gradlew dependencies --no-daemon -q > /tmp/gradle-deps.log 2>&1 \
+    && printf "Gradle deps resolved (%d lines)\n" "$(wc -l < /tmp/gradle-deps.log)" \
+    || { cat /tmp/gradle-deps.log; exit 1; }
 COPY src/ src/
 RUN ./gradlew bootJar --no-daemon -q
 
