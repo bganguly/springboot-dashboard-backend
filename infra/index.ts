@@ -187,15 +187,18 @@ if (backendRuntime !== "gke") {
         resources: {
           limits: { cpu: "1", memory: "512Mi" },
         },
-        envs: [{
-          name: "DATABASE_URL",
-          valueSource: {
-            secretKeyRef: {
-              secret: dbUrlSecret.secretId,
-              version: dbUrlSecretVersion?.version ?? "latest",
+        envs: [
+          {
+            name: "DATABASE_URL",
+            valueSource: {
+              secretKeyRef: {
+                secret: dbUrlSecret.secretId,
+                version: dbUrlSecretVersion?.version ?? "latest",
+              },
             },
           },
-        }],
+          { name: "SPRING_FLYWAY_SCHEMAS", value: "public" },
+        ],
         startupProbe: {
           tcpSocket: { port: 8080 },
           initialDelaySeconds: 10,
