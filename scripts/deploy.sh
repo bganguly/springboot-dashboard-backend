@@ -92,9 +92,9 @@ _prompt_menu() {
   (( _full_count > 0 )) && printf ' [%s resources active]' "$_full_count" || printf ' [not deployed]'
   printf '\n'
   printf '               Neon recommended for DB (~$0/mo free tier, prompted after selection).\n'
-  printf '\nChoice [1/2/3, default 2]: '
+  printf '\nChoice [1/2/3, default 3]: '
   read -r _MODE
-  case "${_MODE:-2}" in
+  case "${_MODE:-3}" in
     2) _TARGET="remote"; DEPLOY_MODE="lite" ;;
     3) _TARGET="remote"; DEPLOY_MODE="full" ;;
     *) _TARGET="local";  DEPLOY_MODE=""    ;;
@@ -150,10 +150,10 @@ _prompt_database_backend() {
       db_label="GCE Postgres VM"
     fi
     printf '\n  Database: %s  [cached — using saved URL]\n' "$db_label"
-    printf '  Replace? [y/N]: '
+    printf '  Continue with saved? [Y/n]: '
     read -r _REPLACE
-    case "${_REPLACE:-N}" in
-      [Yy]*)
+    case "${_REPLACE:-Y}" in
+      [Nn]*)
         printf '  Enter new Neon DATABASE_URL\n  > '
         read -r _NEW_URL
         if [[ -n "$_NEW_URL" ]]; then
