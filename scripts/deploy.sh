@@ -425,7 +425,7 @@ _cloudbuild_submit() {
   fi
   local cache_tag tmpyaml
   cache_tag="${tag%:*}:cache"
-  tmpyaml=$(mktemp /tmp/cloudbuild.XXXXXX.yaml)
+  tmpyaml=$(mktemp /tmp/cloudbuild.XXXXXX)
   cat > "$tmpyaml" <<YAML
 steps:
 - name: 'gcr.io/cloud-builders/docker'
@@ -876,7 +876,7 @@ _save_snapshot_to_gcs() {
   [[ "$gcs_exists" == "yes" ]] && return 0
   printf '  Saving snapshot → GCS (%s)...\n' "$_GCS_BASENAME"
   local tmp
-  tmp=$(mktemp /tmp/snap.XXXXXX.dump)
+  tmp=$(mktemp /tmp/snap.XXXXXX)
   pg_dump --no-owner --no-privileges -Fc "$NEON_DATABASE_URL" -f "$tmp" 2>/dev/null \
     || { rm -f "$tmp"; printf '  pg_dump failed — skipping.\n'; return 0; }
   gsutil cp "$tmp" "$DEMO_SNAPSHOT_GCS_URI" 2>/dev/null \
@@ -911,7 +911,7 @@ _seed_neon() {
   command -v pg_restore >/dev/null 2>&1 || { printf '  pg_restore not found — brew install libpq\n'; exit 1; }
   command -v psql      >/dev/null 2>&1 || { printf '  psql not found — brew install libpq\n'; exit 1; }
   local tmp gcs_token gcs_exists
-  tmp=$(mktemp /tmp/bake.XXXXXX.dump)
+  tmp=$(mktemp /tmp/bake.XXXXXX)
   gcs_token=$(gcloud auth print-access-token 2>/dev/null || true)
   gcs_exists=$(_gcs_check "$gcs_token")
   if [[ "$gcs_exists" == "yes" ]]; then
