@@ -761,6 +761,7 @@ _deploy_pulumi() {
     pulumi config set --secret dashboard:neonDatabaseUrl "$NEON_DATABASE_URL" --stack "$DEPLOY_MODE"
   fi
   _ensure_neon_secret_version
+  _flyway_repair_neon
   _STEP="pulumi up"
   _pulumi_up_robust
 }
@@ -860,6 +861,17 @@ _resolve_snapshot_vars() {
     S3_SOURCE_URI="s3://bikram-nextjs-subsecond-fetch-with-websockets/nextjs-dash/demo.dump"
   fi
   _GCS_BASENAME=$(basename "$DEMO_SNAPSHOT_GCS_URI")
+}
+
+_flyway_repair_neon() {
+  [[ "$USE_NEON" != "true" || -z "${NEON_DATABASE_URL:-}" ]] && return 0
+  local failed
+  failed=$(psql "$NEON_DATABASE_URL" -Atqc \
+    "SELECT version FROM flyway_schema_history WHERE success = false;" 2>/dev/null | tr -d ' \n' || printf '')
+  [[ -z "$failed" ]] && return 0
+  printf '  Flyway repair: removing failed migration(s): %s\n' "$failed"
+  psql "$NEON_DATABASE_URL" -c \
+    "DELETE FROM flyway_schema_history WHERE success = false;" 2>/dev/null || true
 }
 
 _preflight_db() {

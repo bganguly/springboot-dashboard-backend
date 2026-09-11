@@ -3,6 +3,11 @@
 -- join orders/order_items got 0 rows. V7 ran after seeding, which is why
 -- daily_order_count (31 rows) and daily_summary are correct.
 --
+-- Neon enforces idle_in_transaction_session_timeout (default 5 min).
+-- Disable it for this session so the heavy JOINs on 4M rows can complete.
+SET idle_in_transaction_session_timeout = 0;
+SET statement_timeout = 0;
+--
 -- Execution order matters:
 --   1. order_category_facts       -- from live orders (no dependencies)
 --   2. daily_customer_category_summary -- from live orders (no dependencies)
