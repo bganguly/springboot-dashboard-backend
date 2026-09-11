@@ -857,6 +857,25 @@ _resolve_snapshot_vars() {
   _GCS_BASENAME=$(basename "$DEMO_SNAPSHOT_GCS_URI")
 }
 
+_preflight_db() {
+  [[ "$USE_NEON" != "true" || "$_TARGET" != "remote" ]] && return 0
+  [[ -z "${NEON_DATABASE_URL:-}" ]] && return 0
+  printf 'DB preflight...\n'
+  local conn_ok
+  conn_ok=$(psql "$NEON_DATABASE_URL" -t -c 'SELECT 1;' 2>/dev/null | tr -d ' \n' || printf '')
+  if [[ "$conn_ok" != "1" ]]; then
+    printf '  FATAL: cannot connect to Neon — check NEON_DATABASE_URL\n'; exit 1
+  fi
+  local schema_ok
+  schema_ok=$(psql "$NEON_DATABASE_URL" -t -c "SELECT to_regclass('public.orders');" 2>/dev/null | tr -d ' \n' || printf '')
+  if [[ -z "$schema_ok" || "$schema_ok" == "NULL" ]]; then
+    printf '  Schema absent — migrations will run before seeding.\n'
+    return 0
+  fi
+  _check_db_row_count
+  printf '  DB OK: %s orders\n' "$_DB_ORDERS"
+}
+
 _check_db_row_count() {
   if [[ "$USE_NEON" == "true" ]]; then
     _DB_ORDERS=$(psql "$NEON_DATABASE_URL" -t -c 'SELECT COUNT(*) FROM orders;' 2>/dev/null | tr -d ' \n' || echo "0")
@@ -1457,6 +1476,7 @@ _print_cost_summary
 
 _check_gcloud
 _resolve_gcp_config
+_preflight_db
 _resolve_image
 _check_adc
 
@@ -1467,6 +1487,10 @@ if [[ "$_IMG_EXISTED" == "1" && "$BACKEND_RUNTIME" == "cr" && "$USE_NEON" == "tr
     --region "$GCP_REGION" --project "$GCP_PROJECT" \
     --format="value(spec.template.spec.containers[0].image)" 2>/dev/null || true)
   if [[ "$_deployed_img" == "$IMAGE" ]]; then
+    _check_db_row_count
+    if [[ "${_DB_ORDERS:-0}" -eq 0 ]]; then
+      printf '  Image unchanged but DB empty — continuing to seed.\n'
+    else
     printf '  Cloud Run already serving %s — skipping Pulumi + seed.\n' "${IMAGE##*:}"
     BACKEND_URL=$(gcloud run services describe "$_be_svc" \
       --region "$GCP_REGION" --project "$GCP_PROJECT" \
@@ -1480,6 +1504,7 @@ if [[ "$_IMG_EXISTED" == "1" && "$BACKEND_RUNTIME" == "cr" && "$USE_NEON" == "tr
     _post_deploy_checks
     _warn_neon_storage
     exit 0
+    fi
   fi
 fi
 
