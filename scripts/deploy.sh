@@ -1215,7 +1215,8 @@ _save_user_inputs() {
   local existing_db_vm_ip="" existing_artifact_registry="" existing_cloud_run_url=""
   local existing_gcp_project="" existing_gcp_region=""
   if [[ -f "$env_file" ]]; then
-    existing_db_vm_ip=$(grep -E '^DB_VM_IP=' "$env_file" | cut -d= -f2- || true)
+    _raw_ip=$(grep -E '^DB_VM_IP=' "$env_file" | cut -d= -f2- || true)
+    [[ "$_raw_ip" =~ ^[0-9]+\. ]] && existing_db_vm_ip="$_raw_ip" || existing_db_vm_ip=""
     existing_artifact_registry=$(grep -E '^ARTIFACT_REGISTRY=' "$env_file" | cut -d= -f2- || true)
     existing_cloud_run_url=$(grep -E '^CLOUD_RUN_URL=' "$env_file" | cut -d= -f2- || true)
     existing_gcp_project=$(grep -E '^GCP_PROJECT=' "$env_file" | cut -d= -f2- || true)
