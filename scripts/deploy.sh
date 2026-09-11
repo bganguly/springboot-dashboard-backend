@@ -862,7 +862,11 @@ _preflight_db() {
   [[ -z "${NEON_DATABASE_URL:-}" ]] && return 0
   local conn_ok
   conn_ok=$(psql "$NEON_DATABASE_URL" -t -c 'SELECT 1;' 2>/dev/null | tr -d ' \n' || printf '')
-  [[ "$conn_ok" == "1" ]] || { printf 'FATAL: cannot connect to Neon — check NEON_DATABASE_URL\n'; exit 1; }
+  if [[ "$conn_ok" == "1" ]]; then
+    printf 'DB connection check: OK — continuing\n'
+  else
+    printf 'DB connection check: not OK — exiting\n'; exit 1
+  fi
 }
 
 _check_db_row_count() {
