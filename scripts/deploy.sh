@@ -121,10 +121,10 @@ except Exception:
       *)     BACKEND_RUNTIME="gke" ;;
     esac
   else
-    printf '\n  Backend: Cloud Run (serverless, scales to zero). Use GKE instead (~$22/mo)? [y/N]: '
+    printf '\n  Backend: Cloud Run (serverless, scales to zero). Keep Cloud Run? [Y/n]: '
     read -r _BR
-    case "${_BR:-N}" in
-      [Yy]*) BACKEND_RUNTIME="gke" ;;
+    case "${_BR:-Y}" in
+      [Nn]*) BACKEND_RUNTIME="gke" ;;
       *)     BACKEND_RUNTIME="cr"  ;;
     esac
   fi
@@ -1274,7 +1274,7 @@ _deploy_frontend_inline() {
   [[ -f "$fe_deploy" ]] || return 0
   _STEP="frontend deploy"
   printf '\n  Deploying frontend inline...\n'
-  DEPLOY_MODE="$DEPLOY_MODE" bash "$fe_deploy"
+  DEPLOY_MODE="$DEPLOY_MODE" BACKEND_URL="$BACKEND_URL" bash "$fe_deploy"
 }
 
 # ── Post-deploy checks ────────────────────────────────────────────────────────
