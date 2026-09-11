@@ -931,9 +931,26 @@ _seed_neon() {
   fi
 }
 
+_ensure_schema_neon() {
+  local table_exists
+  table_exists=$(psql "$NEON_DATABASE_URL" -t -c \
+    "SELECT to_regclass('public.orders');" 2>/dev/null | tr -d ' \n')
+  [[ "$table_exists" != "" && "$table_exists" != "NULL" ]] && return 0
+  printf '  Schema absent — applying Flyway migrations...\n'
+  local script_dir migration_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  migration_dir="${script_dir}/../src/main/resources/db/migration"
+  for f in $(ls "$migration_dir"/V*.sql | sort); do
+    printf '    %s\n' "$(basename "$f")"
+    psql "$NEON_DATABASE_URL" -f "$f"
+  done
+  printf '  Schema ready.\n'
+}
+
 _seed_neon_sql() {
   local orders
   orders=$([[ "$DEPLOY_MODE" == "lite" ]] && printf '100000' || printf '4000000')
+  _ensure_schema_neon
   printf '  No GCS/S3 snapshot — seeding %s orders via seed-large.sql (this takes several minutes)...\n' "$orders"
   local script_dir
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
