@@ -7,7 +7,7 @@ if [ -n "${DATABASE_URL:-}" ]; then
   _HOST_PORT="${_HOST_PORT%%/*}"
   DB_HOST="${_HOST_PORT%:*}"
   DB_PORT="${_HOST_PORT##*:}"
-  : "${DB_PORT:=5432}"
+  [ "$DB_PORT" = "$_HOST_PORT" ] && DB_PORT="5432"
   printf '[entrypoint] Waiting for Postgres at %s:%s...\n' "$DB_HOST" "$DB_PORT"
   i=0
   until nc -z -w2 "$DB_HOST" "$DB_PORT" 2>/dev/null; do
