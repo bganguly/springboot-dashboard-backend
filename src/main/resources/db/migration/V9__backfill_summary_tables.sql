@@ -1,7 +1,38 @@
--- Backfill the three summary tables that were empty after V3.
--- V3 created daily_customer_category_summary with no INSERT, so the two
--- derived tables (daily_filter_category_summary, daily_status_category_summary)
--- that SELECT FROM it ended up empty as well.
+-- Backfill four tables that were empty after V3.
+-- Root cause: V3 ran before seed data was loaded, so all INSERTs that
+-- join orders/order_items got 0 rows. V7 ran after seeding, which is why
+-- daily_order_count (31 rows) and daily_summary are correct.
+--
+-- Execution order matters:
+--   1. order_category_facts       -- from live orders (no dependencies)
+--   2. daily_customer_category_summary -- from live orders (no dependencies)
+--   3. daily_filter_category_summary   -- from daily_customer_category_summary
+--   4. daily_status_category_summary   -- from daily_filter_category_summary
+
+INSERT INTO order_category_facts (
+  "orderId", "placedAt", date,
+  "regionId", "regionCode", status, "orderTotal",
+  "categoryId", "categoryName", "totalItems", "totalRevenue"
+)
+SELECT
+  o.id,
+  o."placedAt",
+  o."placedAt"::date,
+  o."regionId",
+  r.code,
+  o.status,
+  o.total,
+  cat.id,
+  cat.name,
+  coalesce(sum(oi.quantity), 0)::int,
+  coalesce(sum(oi.quantity * oi."unitPrice" * (1 - oi.discount)), 0)
+FROM orders o
+JOIN order_items oi ON oi."orderId" = o.id
+JOIN products p     ON p.id         = oi."productId"
+JOIN categories cat ON cat.id       = p."categoryId"
+JOIN regions r      ON r.id         = o."regionId"
+GROUP BY o.id, o."placedAt", o."regionId", r.code, o.status, o.total, cat.id, cat.name
+ON CONFLICT ("orderId", "categoryId") DO NOTHING;
 
 INSERT INTO daily_customer_category_summary (
   date, "customerId", "regionId", "regionCode", status,
