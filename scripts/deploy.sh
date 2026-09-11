@@ -487,6 +487,7 @@ _resolve_image() {
 
   local tag
   tag=$(find "$ROOT_DIR/src" "$ROOT_DIR/Dockerfile" \
+      "$ROOT_DIR/docker-entrypoint.sh" \
       "$ROOT_DIR/build.gradle.kts" "$ROOT_DIR/settings.gradle.kts" \
       -type f 2>/dev/null | sort | xargs cat 2>/dev/null \
     | _shasum | cut -c1-16 || true)
