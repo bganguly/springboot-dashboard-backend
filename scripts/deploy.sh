@@ -185,48 +185,20 @@ _prompt_database_backend() {
 _print_cost_summary() {
   [[ "$_TARGET" != "remote" ]] && return 0
   if [[ "$DEPLOY_MODE" == "lite" ]]; then
-    printf '\n--- Lite GCP summary ---\n'
-    if [[ "$USE_NEON" == "true" ]]; then
-      printf '  Backend:    Cloud Run · scale-to-zero\n'
-      printf '  DB:         Neon serverless Postgres (~$0/mo)\n'
-      printf '  Cost est:   ~$0-2/mo\n'
-    elif [[ "$BACKEND_RUNTIME" == "gke" ]]; then
-      printf '  Backend:    GKE (e2-standard-2 node, always-on)\n'
-      printf '  DB:         e2-standard-2 Postgres VM, 20 GB SSD (~$52/mo)\n'
-      printf '  Cost est:   ~$66/mo\n'
-    else
-      printf '  Backend:    Cloud Run · scale-to-zero\n'
-      printf '  DB:         e2-standard-2 Postgres VM, 20 GB SSD (~$52/mo)\n'
-      printf '  Cost est:   ~$52/mo\n'
-    fi
+    [[ "$USE_NEON" == "true" ]] && printf '  Cost: ~$0-2/mo (Cloud Run + Neon free tier)\n' \
+    || { [[ "$BACKEND_RUNTIME" == "gke" ]] \
+      && printf '  Cost: ~$66/mo (GKE + VM)\n' \
+      || printf '  Cost: ~$52/mo (Cloud Run + VM)\n'; }
   else
-    printf '\n'
-    printf '  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n'
-    printf '  !!                                                        !!\n'
     if [[ "$USE_NEON" == "true" ]]; then
-      printf '  !!   FULL MODE — 4M rows, Cloud Run + Neon               !!\n'
-      printf '  !!                                                        !!\n'
-      printf '  !!   Backend:  Cloud Run (min-instances: 0)              !!\n'
-      printf '  !!   DB:       Neon serverless Postgres (~$0/mo)         !!\n'
-      printf '  !!   Cost est: ~$1-3/mo (Cloud Run only, Neon free tier) !!\n'
+      printf '  Cost: ~$1-3/mo (Full · Cloud Run + Neon free tier)\n'
     elif [[ "$BACKEND_RUNTIME" == "gke" ]]; then
-      printf '  !!   FULL MODE — EXPENSIVE, TEAR DOWN WHEN DONE          !!\n'
-      printf '  !!                                                        !!\n'
-      printf '  !!   Backend:  GKE (e2-standard-2 node, always-on)       !!\n'
-      printf '  !!   DB:       n2-standard-4 Postgres VM (4 vCPU, 16 GB) !!\n'
-      printf '  !!   Cost est: ~$200-300/mo                              !!\n'
+      printf '\n!! FULL + GKE + VM — ~$200-300/mo — tear down when done !!\n'
+      printf '  Type YES to continue: '; read -r _FULL_CONFIRM
+      [[ "$_FULL_CONFIRM" == "YES" ]] || { printf 'Aborted.\n'; exit 0; }
     else
-      printf '  !!   FULL MODE — EXPENSIVE, TEAR DOWN WHEN DONE          !!\n'
-      printf '  !!                                                        !!\n'
-      printf '  !!   Backend:  Cloud Run (min-instances: 0)              !!\n'
-      printf '  !!   DB:       n2-standard-4 Postgres VM (4 vCPU, 16 GB) !!\n'
-      printf '  !!   Cost est: ~$52/mo (GCE VM always-on)               !!\n'
-    fi
-    printf '  !!                                                        !!\n'
-    printf '  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n'
-    if [[ "$USE_NEON" != "true" ]]; then
-      printf '\n  Type YES to continue with full deploy: '
-      read -r _FULL_CONFIRM
+      printf '\n!! FULL + Cloud Run + VM — ~$52/mo — tear down when done !!\n'
+      printf '  Type YES to continue: '; read -r _FULL_CONFIRM
       [[ "$_FULL_CONFIRM" == "YES" ]] || { printf 'Aborted.\n'; exit 0; }
     fi
   fi
@@ -418,7 +390,6 @@ _check_gcloud() {
     ACTIVE_ACCOUNT=$(gcloud auth list --filter=status:ACTIVE --format="value(account)" 2>/dev/null | head -1 || true)
     [[ -n "$ACTIVE_ACCOUNT" ]] || { printf 'Login failed.\n' >&2; exit 1; }
   fi
-  printf '\nAuthenticated as: %s\n' "$ACTIVE_ACCOUNT"
 }
 
 _resolve_gcp_config() {
@@ -434,8 +405,7 @@ _resolve_gcp_config() {
   }
   cfg_region=$(gcloud config get-value compute/region 2>/dev/null || true)
   GCP_REGION="${cfg_region:-${GCP_REGION:-us-central1}}"
-  printf '\n=== deployment config ===\n'
-  printf '  Project: %s\n  Region:  %s\n' "$GCP_PROJECT" "$GCP_REGION"
+  printf 'Auth: %s  Project: %s  Region: %s\n' "$ACTIVE_ACCOUNT" "$GCP_PROJECT" "$GCP_REGION"
 }
 
 # ── Image build ───────────────────────────────────────────────────────────────
@@ -465,7 +435,6 @@ _cloudbuild_submit() {
 }
 
 _resolve_image() {
-  printf '  Checking Artifact Registry API...\n'
   local ar_state
   ar_state=$(gcloud services list --project="$GCP_PROJECT" \
     --filter="name:artifactregistry.googleapis.com" --format="value(state)" 2>/dev/null || true)
@@ -490,7 +459,6 @@ _resolve_image() {
   tag="${tag:-$(date +%Y%m%d%H%M%S)}"
   IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT}/${registry}/backend:${tag}"
 
-  printf '  Checking if image %s exists...\n' "$tag"
   local exists
   exists=$(gcloud artifacts docker tags list \
     "${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT}/${registry}/backend" \
@@ -498,7 +466,7 @@ _resolve_image() {
     --project "$GCP_PROJECT" 2>/dev/null | head -1 || true)
 
   if [[ -n "$exists" ]]; then
-    printf '  Image already exists — skipping build.\n'; return 0
+    printf '  Image %s exists — skipping build.\n' "$tag"; return 0
   fi
 
   printf '\nBuilding and pushing:\n  %s\n' "$IMAGE"
@@ -516,9 +484,8 @@ _resolve_image() {
 }
 
 _check_adc() {
-  printf '  Checking Application Default Credentials...\n'
   gcloud auth application-default print-access-token >/dev/null 2>&1 && return 0
-  printf '  Setting up ADC (required by Pulumi GCP provider)...\n'
+  printf '  Setting up ADC (required by Pulumi)...\n'
   gcloud auth application-default login
 }
 
@@ -730,11 +697,10 @@ _ensure_neon_secret_version() {
     printf '  Neon secret not yet created — pulumi up will provision it.\n'; return 0
   }
 
-  # If latest version already exists, Cloud Run can mount it — nothing to do
   local existing
   if existing=$(gcloud secrets versions access latest \
     --secret="$secret_name" --project="$GCP_PROJECT" 2>/dev/null) && [[ -n "$existing" ]]; then
-    printf '  Neon secret version present.\n'; return 0
+    return 0
   fi
 
   # Secret exists but has no versions (state drift from GCE→Neon switch or failed prior run)
@@ -764,7 +730,6 @@ _deploy_pulumi() {
   DEPLOY_MODE_PREFIX=$([[ "$DEPLOY_MODE" == "lite" ]] && printf 'dash-lite' || printf 'dash-full')
   _write_pulumi_yaml
   if [[ "$USE_NEON" == "true" ]]; then
-    printf '  Storing Neon DATABASE_URL as Pulumi config secret...\n'
     pulumi config set --secret dashboard:neonDatabaseUrl "$NEON_DATABASE_URL" --stack "$DEPLOY_MODE"
   fi
   _ensure_neon_secret_version
@@ -777,7 +742,7 @@ _deploy_pulumi() {
 _setup_db_post_pulumi() {
   local pg_vm="${DEPLOY_MODE_PREFIX}-pg"
   if [[ "$USE_NEON" == "true" ]]; then
-    printf '\n  Neon DATABASE_URL stored in Secret Manager by Pulumi.\n'; return 0
+    return 0
   fi
   _STEP="db vm setup"
   printf '\n  Resetting DB VM...\n'
@@ -870,7 +835,6 @@ _resolve_snapshot_vars() {
 }
 
 _check_db_row_count() {
-  printf '\nChecking database...\n'
   if [[ "$USE_NEON" == "true" ]]; then
     _DB_ORDERS=$(psql "$NEON_DATABASE_URL" -t -c 'SELECT COUNT(*) FROM orders;' 2>/dev/null | tr -d ' \n' || echo "0")
   else
@@ -881,17 +845,20 @@ _check_db_row_count() {
       2>/dev/null | tr -d ' \n' || echo "0")
   fi
   [[ "${_DB_ORDERS:-0}" =~ ^[0-9]+$ ]] || _DB_ORDERS="0"
-  printf '  DB row count: %s\n' "$_DB_ORDERS"
 }
 
 _seed_db() {
-  [[ "${_DB_ORDERS:-0}" -gt 0 ]] && { printf 'Database has %s orders — skipping seed.\n' "$_DB_ORDERS"; return 0; }
-  printf 'Database empty — seeding...\n'
+  if [[ "${_DB_ORDERS:-0}" -gt 0 ]]; then
+    printf 'DB: %s orders\n' "$_DB_ORDERS"; return 0
+  fi
+  printf 'DB empty — seeding...\n'
   if [[ "$USE_NEON" == "true" ]]; then
     _seed_neon
   else
     _seed_gce_bake
   fi
+  _check_db_row_count
+  printf 'DB: %s orders after seed\n' "$_DB_ORDERS"
 }
 
 _gcs_check() {
@@ -1090,17 +1057,14 @@ BAKE_EOF
 # ── Post-seed tasks ───────────────────────────────────────────────────────────
 
 _sync_daily_order_count() {
-  printf '\n  Syncing daily_order_count...\n'
   local sql='INSERT INTO daily_order_count (date, "totalOrders") SELECT "placedAt"::date, COUNT(*) FROM orders GROUP BY "placedAt"::date ON CONFLICT (date) DO UPDATE SET "totalOrders" = EXCLUDED."totalOrders";'
   if [[ "$USE_NEON" == "true" ]]; then
-    psql "$NEON_DATABASE_URL" -c "$sql" 2>/dev/null \
-      && printf '  daily_order_count synced.\n' || printf '  (sync skipped)\n'
+    psql "$NEON_DATABASE_URL" -c "$sql" 2>/dev/null || true
   else
     gcloud compute ssh "${DEPLOY_MODE_PREFIX}-pg" \
       --zone "${GCP_REGION}-a" --project "$GCP_PROJECT" \
       --tunnel-through-iap --ssh-flag="-o ConnectTimeout=10" \
-      --command "sudo -u postgres psql -d app -c \"${sql}\"" 2>/dev/null \
-      && printf '  daily_order_count synced.\n' || printf '  (sync skipped — SSH unavailable)\n'
+      --command "sudo -u postgres psql -d app -c \"${sql}\"" 2>/dev/null || true
   fi
 }
 
@@ -1183,7 +1147,6 @@ _patch_frontend_backend_url() {
   [[ "$BACKEND_RUNTIME" == "gke" ]] && return 0
   [[ -z "$BACKEND_URL" ]] && return 0
   local fe_svc="${DEPLOY_MODE_PREFIX}-frontend"
-  printf '  Checking frontend BACKEND_URL env...\n'
   local current
   current=$(gcloud run services describe "$fe_svc" \
     --region "$GCP_REGION" --project "$GCP_PROJECT" --format="json" 2>/dev/null \
@@ -1196,12 +1159,10 @@ try:
 except Exception: pass
 " 2>/dev/null || true)
   if [[ -n "$current" && "$current" != "$BACKEND_URL" ]]; then
-    printf '  Stale BACKEND_URL (%s) — patching to %s\n' "$current" "$BACKEND_URL"
+    printf '  Patching frontend BACKEND_URL: %s\n' "$BACKEND_URL"
     gcloud run services update "$fe_svc" \
       --region "$GCP_REGION" --project "$GCP_PROJECT" \
       --update-env-vars "BACKEND_URL=${BACKEND_URL}" --quiet 2>/dev/null || true
-  else
-    printf '  Frontend BACKEND_URL OK (%s).\n' "${current:-not yet deployed}"
   fi
 }
 
