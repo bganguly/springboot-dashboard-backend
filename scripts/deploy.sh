@@ -762,6 +762,7 @@ _deploy_pulumi() {
   fi
   _ensure_neon_secret_version
   _flyway_repair_neon
+  _neon_premigrate_heavy
   _STEP="pulumi up"
   _pulumi_up_robust
 }
@@ -872,6 +873,58 @@ _flyway_repair_neon() {
   printf '  Flyway repair: removing failed migration(s): %s\n' "$failed"
   psql "$NEON_DATABASE_URL" -c \
     "DELETE FROM flyway_schema_history WHERE success = false;" 2>/dev/null || true
+}
+
+_neon_premigrate_heavy() {
+  [[ "$USE_NEON" != "true" || -z "${NEON_DATABASE_URL:-}" ]] && return 0
+
+  local v9_done v10_done
+  v9_done=$(psql "$NEON_DATABASE_URL" -Atqc \
+    "SELECT count(*) FROM flyway_schema_history WHERE version = '9' AND success = true;" 2>/dev/null | tr -d ' \n' || printf '0')
+  v10_done=$(psql "$NEON_DATABASE_URL" -Atqc \
+    "SELECT count(*) FROM flyway_schema_history WHERE version = '10' AND success = true;" 2>/dev/null | tr -d ' \n' || printf '0')
+  [[ "$v9_done" == "1" && "$v10_done" == "1" ]] && return 0
+
+  if [[ "$v9_done" != "1" ]]; then
+    printf '  Pre-migrating V9 (heavy backfill via psql — bypasses JDBC TCP timeout)...\n'
+    local t0 t1
+    printf '    1/4 order_category_facts\n'; t0=$(date +%s)
+    psql "$NEON_DATABASE_URL" -c "SET statement_timeout = 0; SET idle_in_transaction_session_timeout = 0; INSERT INTO order_category_facts (\"orderId\", \"placedAt\", date, \"regionId\", \"regionCode\", status, \"orderTotal\", \"categoryId\", \"categoryName\", \"totalItems\", \"totalRevenue\") SELECT o.id, o.\"placedAt\", o.\"placedAt\"::date, o.\"regionId\", r.code, o.status, o.total, cat.id, cat.name, coalesce(sum(oi.quantity), 0)::int, coalesce(sum(oi.quantity * oi.\"unitPrice\" * (1 - oi.discount)), 0) FROM orders o JOIN order_items oi ON oi.\"orderId\" = o.id JOIN products p ON p.id = oi.\"productId\" JOIN categories cat ON cat.id = p.\"categoryId\" JOIN regions r ON r.id = o.\"regionId\" GROUP BY o.id, o.\"placedAt\", o.\"regionId\", r.code, o.status, o.total, cat.id, cat.name ON CONFLICT (\"orderId\", \"categoryId\") DO NOTHING;" \
+      || { printf '    FAILED\n'; return 1; }
+    t1=$(date +%s); printf '    done (%ds)\n' $(( t1 - t0 ))
+
+    printf '    2/4 daily_customer_category_summary\n'; t0=$(date +%s)
+    psql "$NEON_DATABASE_URL" -c "SET statement_timeout = 0; SET idle_in_transaction_session_timeout = 0; INSERT INTO daily_customer_category_summary (date, \"customerId\", \"regionId\", \"regionCode\", status, \"categoryId\", \"categoryName\", \"totalOrders\", \"totalRevenue\", \"totalItems\", \"createdAt\", \"updatedAt\") SELECT o.\"placedAt\"::date, o.\"customerId\", o.\"regionId\", r.code, o.status, cat.id, cat.name, count(DISTINCT o.id)::int, coalesce(sum(oi.quantity * oi.\"unitPrice\" * (1 - oi.discount)), 0), coalesce(sum(oi.quantity), 0)::int, now(), now() FROM orders o JOIN order_items oi ON oi.\"orderId\" = o.id JOIN products p ON p.id = oi.\"productId\" JOIN categories cat ON cat.id = p.\"categoryId\" JOIN regions r ON r.id = o.\"regionId\" GROUP BY o.\"placedAt\"::date, o.\"customerId\", o.\"regionId\", r.code, o.status, cat.id, cat.name ON CONFLICT (\"date\", \"customerId\", \"regionId\", \"status\", \"categoryId\") DO NOTHING;" \
+      || { printf '    FAILED\n'; return 1; }
+    t1=$(date +%s); printf '    done (%ds)\n' $(( t1 - t0 ))
+
+    printf '    3/4 daily_filter_category_summary\n'; t0=$(date +%s)
+    psql "$NEON_DATABASE_URL" -c "SET statement_timeout = 0; SET idle_in_transaction_session_timeout = 0; INSERT INTO daily_filter_category_summary (date, \"regionId\", \"regionCode\", status, \"categoryId\", \"categoryName\", \"totalOrders\", \"totalRevenue\", \"totalItems\", \"createdAt\", \"updatedAt\") SELECT date, \"regionId\", \"regionCode\", status, \"categoryId\", \"categoryName\", sum(\"totalOrders\")::int, sum(\"totalRevenue\"), sum(\"totalItems\")::int, now(), now() FROM daily_customer_category_summary GROUP BY date, \"regionId\", \"regionCode\", status, \"categoryId\", \"categoryName\" ON CONFLICT (\"date\", \"regionId\", \"status\", \"categoryId\") DO UPDATE SET \"regionCode\" = EXCLUDED.\"regionCode\", \"categoryName\" = EXCLUDED.\"categoryName\", \"totalOrders\" = EXCLUDED.\"totalOrders\", \"totalRevenue\" = EXCLUDED.\"totalRevenue\", \"totalItems\" = EXCLUDED.\"totalItems\", \"updatedAt\" = CURRENT_TIMESTAMP;" \
+      || { printf '    FAILED\n'; return 1; }
+    t1=$(date +%s); printf '    done (%ds)\n' $(( t1 - t0 ))
+
+    printf '    4/4 daily_status_category_summary\n'; t0=$(date +%s)
+    psql "$NEON_DATABASE_URL" -c "SET statement_timeout = 0; SET idle_in_transaction_session_timeout = 0; INSERT INTO daily_status_category_summary (date, status, \"categoryId\", \"categoryName\", \"totalOrders\", \"totalRevenue\", \"totalItems\", \"createdAt\", \"updatedAt\") SELECT date, status, \"categoryId\", \"categoryName\", sum(\"totalOrders\")::int, sum(\"totalRevenue\"), sum(\"totalItems\")::int, now(), now() FROM daily_filter_category_summary GROUP BY date, status, \"categoryId\", \"categoryName\" ON CONFLICT (\"date\", \"status\", \"categoryId\") DO UPDATE SET \"categoryName\" = EXCLUDED.\"categoryName\", \"totalOrders\" = EXCLUDED.\"totalOrders\", \"totalRevenue\" = EXCLUDED.\"totalRevenue\", \"totalItems\" = EXCLUDED.\"totalItems\", \"updatedAt\" = CURRENT_TIMESTAMP;" \
+      || { printf '    FAILED\n'; return 1; }
+    t1=$(date +%s); printf '    done (%ds)\n' $(( t1 - t0 ))
+
+    psql "$NEON_DATABASE_URL" -c "INSERT INTO flyway_schema_history (installed_rank, version, description, type, script, checksum, installed_by, execution_time, success) VALUES (9, '9', 'backfill summary tables', 'SQL', 'V9__backfill_summary_tables.sql', -1975138733, 'neondb_owner', 0, true) ON CONFLICT (installed_rank) DO NOTHING;" \
+      || { printf '    V9 history record insert failed\n'; return 1; }
+    printf '  V9 pre-migration complete.\n'
+  fi
+
+  if [[ "$v10_done" != "1" ]]; then
+    printf '  Pre-migrating V10 (index rename via psql)...\n'
+    psql "$NEON_DATABASE_URL" -c "DROP INDEX IF EXISTS \"idx_orders_search_text_bigm\"; CREATE INDEX IF NOT EXISTS \"idx_orders_search_text_trgm\" ON orders USING gin (search_text gin_trgm_ops);" \
+      || { printf '    V10 index 1/3 failed\n'; return 1; }
+    psql "$NEON_DATABASE_URL" -c "DROP INDEX IF EXISTS \"idx_orders_notes_bigm\"; CREATE INDEX IF NOT EXISTS \"idx_orders_notes_trgm\" ON orders USING gin (notes gin_trgm_ops);" \
+      || { printf '    V10 index 2/3 failed\n'; return 1; }
+    psql "$NEON_DATABASE_URL" -c "DROP INDEX IF EXISTS \"idx_customers_bigm\"; CREATE INDEX IF NOT EXISTS \"idx_customers_trgm\" ON customers USING gin ((\"firstName\"||' '||\"lastName\"||' '||email) gin_trgm_ops);" \
+      || { printf '    V10 index 3/3 failed\n'; return 1; }
+    psql "$NEON_DATABASE_URL" -c "INSERT INTO flyway_schema_history (installed_rank, version, description, type, script, checksum, installed_by, execution_time, success) VALUES (10, '10', 'rename trgm indexes', 'SQL', 'V10__rename_trgm_indexes.sql', 877711082, 'neondb_owner', 0, true) ON CONFLICT (installed_rank) DO NOTHING;" \
+      || { printf '    V10 history record insert failed\n'; return 1; }
+    printf '  V10 pre-migration complete.\n'
+  fi
 }
 
 _preflight_db() {
