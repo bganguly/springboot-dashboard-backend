@@ -1,4 +1,5 @@
 FROM eclipse-temurin:21-jdk-alpine@sha256:dfb58f010fc58c48069b670a924b8f08a99672932d37ec8c7e839a52c7e3226c AS builder
+ARG BUILD_DATE=unknown
 WORKDIR /app
 COPY gradlew gradlew.bat* ./
 COPY gradle/ gradle/
