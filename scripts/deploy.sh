@@ -909,17 +909,36 @@ _neon_premigrate_heavy() {
   printf '  Using direct Neon URL (bypasses PgBouncer TCP timeout)\n'
 
   if [[ "$v9_done" != "1" ]]; then
-    printf '  Pre-migrating V9 (heavy backfill — each INSERT on its own connection)...\n'
-    local t0 t1
+    printf '  Pre-migrating V9 (batched backfill — 400K orders per batch)...\n'
+    local t0 t1 max_id batch_size batch_start batch_end batch_num total_batches
+    batch_size=400000
+    max_id=$(psql "$direct_url" -Atqc "SELECT COALESCE(MAX(id),0) FROM orders;" | tr -d ' \n')
+    total_batches=$(( (max_id + batch_size - 1) / batch_size ))
+    printf '    max order id: %s  batches: %s\n' "$max_id" "$total_batches"
+
     printf '    1/4 order_category_facts\n'; t0=$(date +%s)
-    psql "$direct_url" -c "SET statement_timeout = 0; SET idle_in_transaction_session_timeout = 0; INSERT INTO order_category_facts (\"orderId\", \"placedAt\", date, \"regionId\", \"regionCode\", status, \"orderTotal\", \"categoryId\", \"categoryName\", \"totalItems\", \"totalRevenue\") SELECT o.id, o.\"placedAt\", o.\"placedAt\"::date, o.\"regionId\", r.code, o.status, o.total, cat.id, cat.name, coalesce(sum(oi.quantity), 0)::int, coalesce(sum(oi.quantity * oi.\"unitPrice\" * (1 - oi.discount)), 0) FROM orders o JOIN order_items oi ON oi.\"orderId\" = o.id JOIN products p ON p.id = oi.\"productId\" JOIN categories cat ON cat.id = p.\"categoryId\" JOIN regions r ON r.id = o.\"regionId\" GROUP BY o.id, o.\"placedAt\", o.\"regionId\", r.code, o.status, o.total, cat.id, cat.name ON CONFLICT (\"orderId\", \"categoryId\") DO NOTHING;" \
-      || { printf '    FAILED\n'; return 1; }
-    t1=$(date +%s); printf '    done (%ds)\n' $(( t1 - t0 ))
+    batch_num=1; batch_start=1
+    while (( batch_start <= max_id )); do
+      batch_end=$(( batch_start + batch_size - 1 ))
+      printf '      batch %s/%s (ids %s-%s)...\n' "$batch_num" "$total_batches" "$batch_start" "$batch_end"
+      psql "$direct_url" -c "SET statement_timeout = 0; SET idle_in_transaction_session_timeout = 0; INSERT INTO order_category_facts (\"orderId\", \"placedAt\", date, \"regionId\", \"regionCode\", status, \"orderTotal\", \"categoryId\", \"categoryName\", \"totalItems\", \"totalRevenue\") SELECT o.id, o.\"placedAt\", o.\"placedAt\"::date, o.\"regionId\", r.code, o.status, o.total, cat.id, cat.name, coalesce(sum(oi.quantity), 0)::int, coalesce(sum(oi.quantity * oi.\"unitPrice\" * (1 - oi.discount)), 0) FROM orders o JOIN order_items oi ON oi.\"orderId\" = o.id JOIN products p ON p.id = oi.\"productId\" JOIN categories cat ON cat.id = p.\"categoryId\" JOIN regions r ON r.id = o.\"regionId\" WHERE o.id BETWEEN ${batch_start} AND ${batch_end} GROUP BY o.id, o.\"placedAt\", o.\"regionId\", r.code, o.status, o.total, cat.id, cat.name ON CONFLICT (\"orderId\", \"categoryId\") DO NOTHING;" \
+        || { printf '      FAILED (batch %s)\n' "$batch_num"; return 1; }
+      batch_start=$(( batch_end + 1 ))
+      batch_num=$(( batch_num + 1 ))
+    done
+    t1=$(date +%s); printf '    1/4 done (%ds)\n' $(( t1 - t0 ))
 
     printf '    2/4 daily_customer_category_summary\n'; t0=$(date +%s)
-    psql "$direct_url" -c "SET statement_timeout = 0; SET idle_in_transaction_session_timeout = 0; INSERT INTO daily_customer_category_summary (date, \"customerId\", \"regionId\", \"regionCode\", status, \"categoryId\", \"categoryName\", \"totalOrders\", \"totalRevenue\", \"totalItems\", \"createdAt\", \"updatedAt\") SELECT o.\"placedAt\"::date, o.\"customerId\", o.\"regionId\", r.code, o.status, cat.id, cat.name, count(DISTINCT o.id)::int, coalesce(sum(oi.quantity * oi.\"unitPrice\" * (1 - oi.discount)), 0), coalesce(sum(oi.quantity), 0)::int, now(), now() FROM orders o JOIN order_items oi ON oi.\"orderId\" = o.id JOIN products p ON p.id = oi.\"productId\" JOIN categories cat ON cat.id = p.\"categoryId\" JOIN regions r ON r.id = o.\"regionId\" GROUP BY o.\"placedAt\"::date, o.\"customerId\", o.\"regionId\", r.code, o.status, cat.id, cat.name ON CONFLICT (\"date\", \"customerId\", \"regionId\", \"status\", \"categoryId\") DO NOTHING;" \
-      || { printf '    FAILED\n'; return 1; }
-    t1=$(date +%s); printf '    done (%ds)\n' $(( t1 - t0 ))
+    batch_num=1; batch_start=1
+    while (( batch_start <= max_id )); do
+      batch_end=$(( batch_start + batch_size - 1 ))
+      printf '      batch %s/%s (ids %s-%s)...\n' "$batch_num" "$total_batches" "$batch_start" "$batch_end"
+      psql "$direct_url" -c "SET statement_timeout = 0; SET idle_in_transaction_session_timeout = 0; INSERT INTO daily_customer_category_summary (date, \"customerId\", \"regionId\", \"regionCode\", status, \"categoryId\", \"categoryName\", \"totalOrders\", \"totalRevenue\", \"totalItems\", \"createdAt\", \"updatedAt\") SELECT o.\"placedAt\"::date, o.\"customerId\", o.\"regionId\", r.code, o.status, cat.id, cat.name, count(DISTINCT o.id)::int, coalesce(sum(oi.quantity * oi.\"unitPrice\" * (1 - oi.discount)), 0), coalesce(sum(oi.quantity), 0)::int, now(), now() FROM orders o JOIN order_items oi ON oi.\"orderId\" = o.id JOIN products p ON p.id = oi.\"productId\" JOIN categories cat ON cat.id = p.\"categoryId\" JOIN regions r ON r.id = o.\"regionId\" WHERE o.id BETWEEN ${batch_start} AND ${batch_end} GROUP BY o.\"placedAt\"::date, o.\"customerId\", o.\"regionId\", r.code, o.status, cat.id, cat.name ON CONFLICT (\"date\", \"customerId\", \"regionId\", \"status\", \"categoryId\") DO NOTHING;" \
+        || { printf '      FAILED (batch %s)\n' "$batch_num"; return 1; }
+      batch_start=$(( batch_end + 1 ))
+      batch_num=$(( batch_num + 1 ))
+    done
+    t1=$(date +%s); printf '    2/4 done (%ds)\n' $(( t1 - t0 ))
 
     printf '    3/4 daily_filter_category_summary\n'; t0=$(date +%s)
     psql "$direct_url" -c "SET statement_timeout = 0; SET idle_in_transaction_session_timeout = 0; INSERT INTO daily_filter_category_summary (date, \"regionId\", \"regionCode\", status, \"categoryId\", \"categoryName\", \"totalOrders\", \"totalRevenue\", \"totalItems\", \"createdAt\", \"updatedAt\") SELECT date, \"regionId\", \"regionCode\", status, \"categoryId\", \"categoryName\", sum(\"totalOrders\")::int, sum(\"totalRevenue\"), sum(\"totalItems\")::int, now(), now() FROM daily_customer_category_summary GROUP BY date, \"regionId\", \"regionCode\", status, \"categoryId\", \"categoryName\" ON CONFLICT (\"date\", \"regionId\", \"status\", \"categoryId\") DO UPDATE SET \"regionCode\" = EXCLUDED.\"regionCode\", \"categoryName\" = EXCLUDED.\"categoryName\", \"totalOrders\" = EXCLUDED.\"totalOrders\", \"totalRevenue\" = EXCLUDED.\"totalRevenue\", \"totalItems\" = EXCLUDED.\"totalItems\", \"updatedAt\" = CURRENT_TIMESTAMP;" \
