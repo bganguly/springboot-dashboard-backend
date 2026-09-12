@@ -948,6 +948,28 @@ _neon_premigrate_heavy() {
       || { printf '    V10 history record insert failed\n'; return 1; }
     printf '  V10 pre-migration complete.\n'
   fi
+  _dump_neon_to_gcs
+}
+
+_dump_neon_to_gcs() {
+  [[ "$USE_NEON" != "true" || -z "${NEON_DATABASE_URL:-}" ]] && return 0
+  command -v pg_dump >/dev/null 2>&1 || { printf '  pg_dump not found — skipping full.dump\n'; return 0; }
+  local script_dir dump_path direct_url
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  dump_path="${script_dir}/full.dump"
+  direct_url=$(printf '%s' "$NEON_DATABASE_URL" \
+    | sed 's/-pooler\././' \
+    | sed 's/[&?]channel_binding=[^&]*//')
+  printf '\n  Saving full.dump to %s...\n' "$dump_path"
+  pg_dump --no-owner --no-privileges -Fc "$direct_url" -f "$dump_path" \
+    && printf '  full.dump size: %s\n' "$(du -sh "$dump_path" | cut -f1)" \
+    || { printf '  pg_dump failed — skipping snapshot upload\n'; return 0; }
+  if [[ -n "${DEMO_SNAPSHOT_GCS_URI:-}" ]]; then
+    printf '  Uploading to GCS (%s)...\n' "$DEMO_SNAPSHOT_GCS_URI"
+    gsutil cp "$dump_path" "$DEMO_SNAPSHOT_GCS_URI" 2>/dev/null \
+      && printf '  GCS snapshot updated — next build restores from this dump (fast path).\n' \
+      || printf '  GCS upload failed — local full.dump kept at %s\n' "$dump_path"
+  fi
 }
 
 _preflight_db() {
