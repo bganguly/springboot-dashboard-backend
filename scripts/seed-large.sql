@@ -1,6 +1,6 @@
 -- Efficient bulk seed via generate_series (loads millions of rows in minutes).
--- Usage: psql "$DATABASE_URL" -v orders=4000000 -f scripts/seed-large.sql
--- `orders` MUST be passed with -v. Other volumes default below.
+-- Usage: psql "$DATABASE_URL" -v orders=4000000 -v first_names_file=scripts/data/first_names.txt -v last_names_file=scripts/data/last_names.txt -f scripts/seed-large.sql
+-- `orders`, `first_names_file`, and `last_names_file` MUST be passed with -v.
 \set ON_ERROR_STOP on
 \set customers 200000
 \set products 5000
@@ -10,6 +10,13 @@
 \set summary_days 30
 \set summary_cats 200
 \set summary_regions 50
+
+-- Load 3186 first names and 473 last names (same pool as clickhouse-dashboard)
+CREATE TEMP TABLE _first_names (id serial, name text);
+\copy _first_names (name) FROM :'first_names_file'
+
+CREATE TEMP TABLE _last_names (id serial, name text);
+\copy _last_names (name) FROM :'last_names_file'
 
 \echo Truncating existing data...
 TRUNCATE order_items, orders, daily_summary, products, customers, categories, regions RESTART IDENTITY CASCADE;
@@ -33,12 +40,17 @@ FROM generate_series(1, :products) g;
 
 INSERT INTO customers (email, "firstName", "lastName", "regionId", "createdAt", "updatedAt")
 SELECT 'customer' || g || '@example.com',
-       (ARRAY['Ava','Liam','Maya','Noah','Sara','Omar','Ivy','Leo'])[1 + floor(random() * 8)],
-       (ARRAY['Banks','Carter','Diaz','Evans','Frank','Gupta','Hale','Ito'])[1 + floor(random() * 8)],
+       fn.name,
+       ln.name,
        1 + floor(random() * :regions)::int, now(), now()
-FROM generate_series(1, :customers) g;
+FROM generate_series(1, :customers) g
+JOIN _first_names fn ON fn.id = 1 + ((g - 1) % 3186)
+JOIN _last_names  ln ON ln.id = 1 + ((g - 1) % 473);
 
 \echo Seeding :orders orders in batches of :batch_size...
+-- Disable per-row trigger during bulk insert; search_text is populated in a
+-- single batch UPDATE below (avoids 2 SELECT lookups per row × 4M rows).
+ALTER TABLE orders DISABLE TRIGGER ALL;
 SET seed.orders = :'orders';
 SET seed.batch_size = :'batch_size';
 SET seed.customers = :'customers';
@@ -65,7 +77,7 @@ BEGIN
            round((random() * 500 + 10)::numeric, 2),
            'USD',
            'order ' || g,
-           now() - (random() * 30) * interval '1 day',
+           now() - (random() * 730) * interval '1 day',
            now()
     FROM generate_series(start_id, end_id) g;
 
@@ -77,6 +89,22 @@ BEGIN
     start_id := end_id + 1;
   END LOOP;
 END $$;
+
+\echo Populating search_text (bulk JOIN — triggers still disabled)...
+UPDATE orders o
+SET search_text =
+  c."firstName" || ' ' || c."lastName" || ' ' ||
+  COALESCE(o.notes, '') || ' ' ||
+  o.total::text || ' ' ||
+  o.id::text || ' ' ||
+  o.status::text || ' ' ||
+  r.code || ' ' || r.name || ' ' ||
+  o."placedAt"::date::text
+FROM customers c, regions r
+WHERE c.id = o."customerId"
+  AND r.id = o."regionId";
+
+ALTER TABLE orders ENABLE TRIGGER ALL;
 
 \echo Seeding order_items in batches of :batch_size...
 DO $$

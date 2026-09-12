@@ -1220,9 +1220,23 @@ if rows:
     subprocess.run(['psql', db_url, '-c', sql], check=True, capture_output=True)
     print(f"  Flyway history: {len(rows)} migrations recorded.")
 PYEOF
+  # V9 runs during the migration loop with empty tables (0 rows inserted).
+  # Remove it from history so _neon_premigrate_heavy re-runs it after the seed
+  # populates orders/order_items with actual data.
+  psql "$NEON_DATABASE_URL" -c "DELETE FROM flyway_schema_history WHERE version = '9';" 2>/dev/null || true
   printf '  Schema reset complete.\n'
   printf '  No GCS/S3 snapshot — seeding %s orders via seed-large.sql (this takes several minutes)...\n' "$orders"
-  psql "$NEON_DATABASE_URL" -v "orders=${orders}" -f "${script_dir}/seed-large.sql"
+  # Use the direct (non-pooler) Neon URL: seeding 4M rows takes ~30 min and
+  # PgBouncer in transaction mode drops silent connections after ~11 min.
+  local direct_url
+  direct_url=$(printf '%s' "$NEON_DATABASE_URL" \
+    | sed 's/-pooler\././' \
+    | sed 's/[&?]channel_binding=[^&]*//')
+  psql "$direct_url" \
+    -v "orders=${orders}" \
+    -v "first_names_file=${script_dir}/data/first_names.txt" \
+    -v "last_names_file=${script_dir}/data/last_names.txt" \
+    -f "${script_dir}/seed-large.sql"
 }
 
 _download_from_s3_local() {
