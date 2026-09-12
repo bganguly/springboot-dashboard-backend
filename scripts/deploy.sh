@@ -885,6 +885,13 @@ _neon_premigrate_heavy() {
     "SELECT count(*) FROM flyway_schema_history WHERE version = '10' AND success = true;" 2>/dev/null | tr -d ' \n' || printf '0')
   [[ "$v9_done" == "1" && "$v10_done" == "1" ]] && return 0
 
+  # Use the direct (non-pooler) URL: the pooler runs PgBouncer in transaction
+  # mode, which silently drops the TCP connection after ~11 min of query
+  # silence. The heavy V9 INSERTs take 10-15 min each with no data flowing
+  # back to the client, so PgBouncer kills the connection mid-query. The
+  # direct endpoint has no intermediary and holds the connection for the
+  # full duration. Derive it by stripping -pooler from the hostname and
+  # channel_binding (not supported on the direct endpoint) from the URL.
   local direct_url
   direct_url=$(printf '%s' "$NEON_DATABASE_URL" \
     | sed 's/-pooler\././' \
