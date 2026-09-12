@@ -885,6 +885,11 @@ _neon_premigrate_heavy() {
     "SELECT count(*) FROM flyway_schema_history WHERE version = '10' AND success = true;" 2>/dev/null | tr -d ' \n' || printf '0')
   [[ "$v9_done" == "1" && "$v10_done" == "1" ]] && return 0
 
+  printf '\n  WARNING: V9/V10 migrations not yet applied.\n'
+  printf '  This will run heavy psql backfills directly against Neon before deploying.\n'
+  printf '  Expect ~60 min of wait time (4 large INSERTs + index builds).\n'
+  printf '  Keep this terminal open and on a stable network connection.\n\n'
+
   # Use the direct (non-pooler) URL: the pooler runs PgBouncer in transaction
   # mode, which silently drops the TCP connection after ~11 min of query
   # silence. The heavy V9 INSERTs take 10-15 min each with no data flowing
