@@ -313,6 +313,7 @@ _deploy_local() {
   _local_ensure_gradlew
   _local_ensure_db "$DB" "$ORDERS"
   _local_ensure_bigm_indexes "$DB"
+  _seed_typesense
 
   printf '\n=== diagnostics ===\n'
   DATABASE_URL="$DB_URL" ./scripts/diagnose.sh
@@ -1744,6 +1745,26 @@ _deploy_frontend_inline() {
   DEPLOY_MODE="$DEPLOY_MODE" BACKEND_URL="$BACKEND_URL" bash "$fe_deploy"
 }
 
+# ── Typesense seed ────────────────────────────────────────────────────────────
+
+_seed_typesense() {
+  [[ "$USE_TYPESENSE" != "true" ]] && return 0
+  [[ -z "${TYPESENSE_URL:-}" || -z "${TYPESENSE_API_KEY:-}" ]] && return 0
+  printf '\n=== Typesense collection ===\n'
+  local db_arg=""
+  if [[ "${_TARGET:-remote}" == "local" ]]; then
+    db_arg="--db-url postgresql://$(whoami):@localhost:5432/database_flyway_orm"
+  elif [[ "$USE_NEON" == "true" && -n "${NEON_DATABASE_URL:-}" ]]; then
+    db_arg="--db-url ${NEON_DATABASE_URL}"
+  else
+    printf '  GCE-backed DB — cannot reach Postgres from here. Seed manually:\n'
+    printf '    ./scripts/seed-typesense.sh --db-url <internal-pg-url>\n'
+    return 0
+  fi
+  TYPESENSE_URL="$TYPESENSE_URL" TYPESENSE_API_KEY="$TYPESENSE_API_KEY" \
+    "$ROOT_DIR/scripts/seed-typesense.sh" $db_arg
+}
+
 # ── Post-deploy checks ────────────────────────────────────────────────────────
 
 _post_deploy_checks() {
@@ -1884,6 +1905,7 @@ if [[ "$_IMG_EXISTED" == "1" && "$BACKEND_RUNTIME" == "cr" && "$USE_NEON" == "tr
     _patch_frontend_backend_url
     cd "$ROOT_DIR/infra"
     _save_env_file
+    _seed_typesense
     printf '\nBackend URL: %s\n' "$BACKEND_URL"
     _update_readme
     _deploy_frontend_inline
@@ -1903,6 +1925,7 @@ _seed_db
 [[ "$USE_NEON" == "true" ]] && _neon_premigrate_heavy
 [[ "$USE_NEON" == "true" && "${_DB_ORDERS:-0}" -gt 0 ]] && _save_snapshot_to_gcs
 _sync_daily_order_count
+_seed_typesense
 
 _scale_down_gke_if_switching
 
