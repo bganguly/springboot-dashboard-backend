@@ -1011,24 +1011,11 @@ _check_db_row_count() {
 }
 
 _save_snapshot_via_cloud_build() {
-  local secret_name="${DEPLOY_MODE_PREFIX}-database-url"
-  local project_number
-  project_number=$(gcloud projects describe "$GCP_PROJECT" --format 'value(projectNumber)' 2>/dev/null || true)
-  if [[ -n "$project_number" ]]; then
-    local cb_sa="${project_number}@cloudbuild.gserviceaccount.com"
-    local already_bound
-    already_bound=$(gcloud secrets get-iam-policy "$secret_name" --project="$GCP_PROJECT" \
-      --format='value(bindings.members)' 2>/dev/null | grep -c "$cb_sa" || true)
-    if [[ "$already_bound" -eq 0 ]]; then
-      gcloud secrets add-iam-policy-binding "$secret_name" \
-        --project="$GCP_PROJECT" \
-        --member="serviceAccount:${cb_sa}" \
-        --role="roles/secretmanager.secretAccessor" \
-        --condition=None >/dev/null 2>&1 || true
-      printf '  Waiting for IAM propagation...\n'
-      sleep 30
-    fi
-  fi
+  [[ -z "${NEON_DATABASE_URL:-}" ]] && return 0
+  local direct_url
+  direct_url=$(printf '%s' "$NEON_DATABASE_URL" \
+    | sed 's/-pooler\././' \
+    | sed 's/[&?]channel_binding=[^&]*//')
   local cb_yaml
   cb_yaml=$(mktemp /tmp/cb.XXXXXX.yaml)
   cat > "$cb_yaml" <<CBEOF
@@ -1037,17 +1024,13 @@ steps:
     entrypoint: sh
     args:
       - '-c'
-      - 'pg_dump --no-owner --no-privileges -Fc "\$\$NEON_URL" -f /workspace/snap.dump && echo "dump size: \$(wc -c < /workspace/snap.dump) bytes"'
-    secretEnv: ['NEON_URL']
+      - 'pg_dump --no-owner --no-privileges -Fc "\$_NEON_URL" -f /workspace/snap.dump && echo "dump size: \$(wc -c < /workspace/snap.dump) bytes"'
   - name: 'gcr.io/cloud-builders/gsutil'
     args: ['cp', '/workspace/snap.dump', '${DEMO_SNAPSHOT_GCS_URI}']
-availableSecrets:
-  secretManager:
-    - versionName: 'projects/${GCP_PROJECT}/secrets/${secret_name}/versions/latest'
-      env: 'NEON_URL'
 CBEOF
   printf '  Submitting Cloud Build pg_dump job (postgres:18 → GCS)...\n'
   gcloud builds submit --no-source --project="$GCP_PROJECT" --config "$cb_yaml" \
+    --substitutions="_NEON_URL=${direct_url}" \
     && printf '  Cloud Build dump complete.\n' \
     || printf '  Cloud Build dump failed — snapshot not saved.\n'
   rm -f "$cb_yaml"
