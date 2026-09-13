@@ -1645,9 +1645,15 @@ _post_deploy_checks() {
       || _chk 3 "Cloud Run service ready" 0 "status: ${cr_status}"
   fi
 
-  local health
-  health=$(curl -sf "${BACKEND_URL}/actuator/health" --max-time 8 2>/dev/null \
-    | python3 -c "import sys,json;print(json.load(sys.stdin).get('status',''))" 2>/dev/null || echo "")
+  local health=""
+  local _attempt
+  for _attempt in 1 2 3 4 5; do
+    health=$(curl -sf "${BACKEND_URL}/actuator/health" --max-time 8 2>/dev/null \
+      | python3 -c "import sys,json;print(json.load(sys.stdin).get('status',''))" 2>/dev/null || echo "")
+    [[ "$health" == "UP" ]] && break
+    printf '  [4] waiting for /actuator/health (attempt %s/5)...\n' "$_attempt"
+    sleep $(( _attempt * 5 ))
+  done
   [[ "$health" == "UP" ]] && _chk 4 "GET /actuator/health → UP" 1 \
     || _chk 4 "GET /actuator/health → UP" 0 "status=${health:-unreachable}"
 
@@ -1664,8 +1670,13 @@ _post_deploy_checks() {
       || _chk 5 "Cloud Run URL assigned" 0 "not yet assigned"
   fi
 
-  local http6
-  http6=$(curl -sf -o /dev/null -w "%{http_code}" "${BACKEND_URL}/api/customers" --max-time 8 2>/dev/null || echo "000")
+  local http6="000"
+  for _attempt in 1 2 3 4 5; do
+    http6=$(curl -sf -o /dev/null -w "%{http_code}" "${BACKEND_URL}/api/customers" --max-time 8 2>/dev/null || echo "000")
+    [[ "$http6" == "200" ]] && break
+    printf '  [6] waiting for /api/customers (attempt %s/5)...\n' "$_attempt"
+    sleep $(( _attempt * 5 ))
+  done
   [[ "$http6" == "200" ]] && _chk 6 "GET /api/customers → 200" 1 || _chk 6 "GET /api/customers → 200" 0 "HTTP $http6"
 
   [[ "${_DB_ORDERS:-0}" -gt 0 ]] \
