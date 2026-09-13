@@ -1073,7 +1073,14 @@ _seed_db() {
   _expected_orders=$([[ "$DEPLOY_MODE" == "lite" ]] && printf '100000' || printf '4000000')
   local _min_orders=$(( _expected_orders * 99 / 100 ))
   if [[ "${_DB_ORDERS:-0}" -ge "$_min_orders" ]]; then
-    printf 'DB: %s orders (>= %s minimum) — skipping seed\n' "$_DB_ORDERS" "$_min_orders"; return 0
+    printf 'DB: %s orders already present. Use existing seed? [Y/n]: ' "$_DB_ORDERS"
+    read -r _use_existing
+    if [[ "${_use_existing:-Y}" =~ ^[Nn] ]]; then
+      printf '  Reseeding...\n'
+      _DB_ORDERS=0
+    else
+      printf 'Skipping seed.\n'; return 0
+    fi
   fi
   if [[ "${_DB_ORDERS:-0}" -gt 0 ]]; then
     printf 'DB: %s orders — below %s minimum, reseeding...\n' "$_DB_ORDERS" "$_min_orders"
