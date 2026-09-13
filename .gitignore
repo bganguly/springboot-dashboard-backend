@@ -2,6 +2,7 @@
 .env.local
 .env.gcp
 .env.gcp.*
+.typesense-creds
 build/
 .gradle/
 *.class

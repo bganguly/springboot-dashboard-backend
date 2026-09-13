@@ -187,6 +187,9 @@ _prompt_database_backend() {
 }
 
 _prompt_typesense() {
+  local TS_CREDS_FILE="$ROOT_DIR/.typesense-creds"
+  local SIBLING_CREDS="$ROOT_DIR/../../typescript-implementations/clickhouse-dashboard/.typesense-creds"
+
   local env_file
   if [[ "$_TARGET" == "remote" ]]; then
     env_file="$ROOT_DIR/.env.gcp.${DEPLOY_MODE}"
@@ -194,28 +197,38 @@ _prompt_typesense() {
     env_file="$ROOT_DIR/.env.local"
   fi
 
-  local saved_enabled="" saved_url="" saved_key=""
+  local saved_enabled=""
   if [[ -f "$env_file" ]]; then
     saved_enabled=$(grep -E '^USE_TYPESENSE=' "$env_file" | cut -d= -f2- | tr -d '"' || true)
-    saved_url=$(grep -E '^TYPESENSE_URL=' "$env_file" | cut -d= -f2- | tr -d '"' || true)
-    saved_key=$(grep -E '^TYPESENSE_API_KEY=' "$env_file" | cut -d= -f2- | tr -d '"' || true)
   fi
 
-  if [[ -n "$saved_enabled" ]]; then
-    USE_TYPESENSE="$saved_enabled"
-    TYPESENSE_URL="$saved_url"
-    TYPESENSE_API_KEY="$saved_key"
-    local ts_label
-    [[ "$USE_TYPESENSE" == "true" ]] \
-      && ts_label="Typesense (${TYPESENSE_URL})" \
-      || ts_label="Postgres ILIKE (default)"
-    printf '\n  Search: %s  [cached — using saved setting]\n' "$ts_label"
-    printf '  Continue with saved? [Y/n]: '
-    read -r _TS_REPLACE
-    case "${_TS_REPLACE:-Y}" in
-      [Nn]*) saved_enabled="" ;;
+  if [[ -n "$saved_enabled" && "$saved_enabled" == "false" ]]; then
+    printf '\n  Search: Postgres ILIKE (saved setting). Re-enable Typesense? [y/N]: '
+    read -r _TS_RECHECK
+    case "${_TS_RECHECK:-N}" in
+      [Yy]*) saved_enabled="" ;;
+      *)     USE_TYPESENSE="false"; return 0 ;;
     esac
-    [[ -n "$saved_enabled" ]] && return 0
+  fi
+
+  if [[ -f "$TS_CREDS_FILE" ]]; then
+    source "$TS_CREDS_FILE"
+  elif [[ -f "$SIBLING_CREDS" ]]; then
+    source "$SIBLING_CREDS"
+    cp "$SIBLING_CREDS" "$TS_CREDS_FILE"
+    chmod 600 "$TS_CREDS_FILE"
+    printf '\n  Loaded Typesense creds from clickhouse-dashboard, copied to .typesense-creds\n'
+  fi
+
+  if [[ -n "${TYPESENSE_URL:-}" && -n "${TYPESENSE_API_KEY:-}" ]]; then
+    printf '\n  Typesense creds found: %s\n' "$TYPESENSE_URL"
+    printf '  Use Typesense for search? [Y/n]: '
+    read -r _TS
+    case "${_TS:-Y}" in
+      [Nn]*) USE_TYPESENSE="false"; return 0 ;;
+      *)     USE_TYPESENSE="true"  ;;
+    esac
+    return 0
   fi
 
   printf '\n  Search backend:\n'
@@ -228,18 +241,17 @@ _prompt_typesense() {
     *)     USE_TYPESENSE="false"; return 0 ;;
   esac
 
-  printf '  Typesense URL (e.g. http://localhost:8108):\n  > '
+  printf '  Typesense URL (e.g. https://your-cluster.a1.typesense.net):\n  > '
   read -r TYPESENSE_URL
   [[ -n "$TYPESENSE_URL" ]] || { printf 'Typesense URL is required.\n'; exit 1; }
 
   printf '  Typesense API key:\n  > '
-  read -r TYPESENSE_API_KEY
+  read -rs TYPESENSE_API_KEY; printf '\n'
   [[ -n "$TYPESENSE_API_KEY" ]] || { printf 'Typesense API key is required.\n'; exit 1; }
 
-  if [[ "$_TARGET" == "local" ]]; then
-    printf 'USE_TYPESENSE=%s\nTYPESENSE_URL=%s\nTYPESENSE_API_KEY=%s\n' \
-      "$USE_TYPESENSE" "$TYPESENSE_URL" "$TYPESENSE_API_KEY" >> "$env_file"
-  fi
+  printf 'TYPESENSE_URL=%s\nTYPESENSE_API_KEY=%s\n' "$TYPESENSE_URL" "$TYPESENSE_API_KEY" > "$TS_CREDS_FILE"
+  chmod 600 "$TS_CREDS_FILE"
+  printf '  Saved to .typesense-creds\n'
 }
 
 _print_cost_summary() {
@@ -760,7 +772,6 @@ config:
   dashboard:useNeon: ${USE_NEON}
   dashboard:typesenseEnabled: ${USE_TYPESENSE}
   dashboard:typesenseUrl: ${TYPESENSE_URL}
-  dashboard:typesenseApiKey: ${TYPESENSE_API_KEY}
 PYAML
   else
     cat > "Pulumi.${DEPLOY_MODE}.yaml" <<PYAML
@@ -775,7 +786,6 @@ config:
   dashboard:useNeon: ${USE_NEON}
   dashboard:typesenseEnabled: ${USE_TYPESENSE}
   dashboard:typesenseUrl: ${TYPESENSE_URL}
-  dashboard:typesenseApiKey: ${TYPESENSE_API_KEY}
 PYAML
   fi
 }
@@ -828,6 +838,9 @@ _deploy_pulumi() {
   _write_pulumi_yaml
   if [[ "$USE_NEON" == "true" ]]; then
     pulumi config set --secret dashboard:neonDatabaseUrl "$NEON_DATABASE_URL" --stack "$DEPLOY_MODE"
+  fi
+  if [[ "$USE_TYPESENSE" == "true" && -n "${TYPESENSE_API_KEY:-}" ]]; then
+    pulumi config set --secret dashboard:typesenseApiKey "$TYPESENSE_API_KEY" --stack "$DEPLOY_MODE"
   fi
   _ensure_neon_secret_version
   _flyway_repair_neon
@@ -1676,8 +1689,6 @@ GCP_REGION=${existing_gcp_region:-${GCP_REGION}}
 USE_NEON=${USE_NEON}
 NEON_DATABASE_URL=${NEON_DATABASE_URL}
 USE_TYPESENSE=${USE_TYPESENSE}
-TYPESENSE_URL=${TYPESENSE_URL}
-TYPESENSE_API_KEY=${TYPESENSE_API_KEY}
 EOF
 }
 
@@ -1692,8 +1703,6 @@ GCP_REGION=${GCP_REGION}
 USE_NEON=${USE_NEON}
 NEON_DATABASE_URL=${NEON_DATABASE_URL}
 USE_TYPESENSE=${USE_TYPESENSE}
-TYPESENSE_URL=${TYPESENSE_URL}
-TYPESENSE_API_KEY=${TYPESENSE_API_KEY}
 EOF
 }
 

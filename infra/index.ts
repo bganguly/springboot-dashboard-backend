@@ -20,7 +20,7 @@ const useNeon = config.getBoolean("useNeon") ?? false;
 const neonDatabaseUrl = useNeon ? config.requireSecret("neonDatabaseUrl") : undefined;
 const typesenseEnabled = config.get("typesenseEnabled") ?? "false";
 const typesenseUrl     = config.get("typesenseUrl")     ?? "";
-const typesenseApiKey  = config.get("typesenseApiKey")  ?? "";
+const typesenseApiKey  = typesenseEnabled === "true" ? config.requireSecret("typesenseApiKey") : pulumi.output("");
 
 // ── APIs ──────────────────────────────────────────────────────────────────────
 const apis = [
