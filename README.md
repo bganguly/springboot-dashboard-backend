@@ -36,7 +36,7 @@ Open **`/explorer.html`** on the running backend to run live requests against ev
 ### Search & chart request flow — step by step
 
 1. **Browser → Nginx frontend** — the React UI sends `GET /api/orders?q=sara` to the Cloud Run frontend service (Nginx on port 80), which proxies the `/api/*` path upstream to the Spring Boot backend over HTTPS with SNI.
-2. **Spring Boot → GIN search** — Spring Boot issues `SELECT * FROM orders WHERE search_text ILIKE '%sara%'` against the GCE Postgres VM; the GIN index on the denormalized `search_text` column (name + notes + total + id + status + region + date) returns sub-second results across 4 M rows without a sequential scan.
+2. **Spring Boot → search** — if a Typesense cluster is reachable, `TypesenseService` handles the query (sub-5ms); otherwise Spring Boot falls back automatically to `SELECT * FROM orders WHERE search_text ILIKE '%sara%'` against the GCE Postgres VM via the GIN index. The active search backend is visible as a badge in the UI (`search · typesense` / `search · postgres`).
 3. **Chart path** — `GET /api/aggregates` is served entirely from pre-aggregated `daily_summary` and related rollup tables; Spring Boot never touches raw `orders` on the chart path.
 4. **Secret injection** — Spring Boot reads `DATABASE_URL` from GCP Secret Manager at container start via `secretKeyRef`; no credentials are stored in the image or env files.
 5. **Results → browser** — Spring Boot returns paginated JSON; the React frontend renders the orders table and Recharts chart.
@@ -129,6 +129,8 @@ deploy.sh (auto) or scripts/bake-demo-snapshot.sh
 | Concern | Approach |
 |---|---|
 | **Search performance** | Denormalized `search_text` column (name + notes + total + id + status + region + date) with one GIN index — sub-second ILIKE on 4 M rows, single index hit per token, no cross-table OR |
+| **Typesense search layer** | Optional Typesense cluster as a faster search path (sub-5ms); `TypesenseService` probes `GET /health` on first use and caches the result 30 s — dead cluster falls back to Postgres silently with no request hanging |
+| **Search backend visibility** | `GET /api/status` returns `{runtime, typesense: bool}`; the UI renders a live badge (`search · typesense` / `search · postgres`) reflecting the actual runtime state, not config |
 | **Chart performance** | Pre-aggregated `daily_summary`, `daily_customer_category_summary`, `daily_status_category_summary`, `daily_filter_category_summary` — sub-second chart aggregates, queries never touch raw `orders` |
 | **Trigger maintenance** | `fn_order_search_text()` (BEFORE INSERT/UPDATE on orders) + `fn_customer_name_to_orders()` (AFTER UPDATE on customers) keep `search_text` current without application-level logic |
 | **Startup resilience** | Cloud Run startup probe with `failureThreshold: 60` × `periodSeconds: 15` = 15 min — survives long Flyway migrations (e.g. UPDATE + CREATE INDEX on 4 M rows) |
@@ -147,6 +149,7 @@ deploy.sh (auto) or scripts/bake-demo-snapshot.sh
 | **CI/CD pipelines** | `deploy.sh` — build → push to Artifact Registry → `pulumi up --yes`; auto bake via ephemeral GCE VM when DB is empty |
 | **Secrets management** | GCP Secret Manager; `DATABASE_URL` injected at runtime via `secretKeyRef`, never stored in image or env file |
 | **Networking, storage, DB architecture** | Private VPC, Direct VPC Egress, GCE VM Postgres on private IP (VPC firewall rules), pg-SSD boot disk |
+| **Full-text search (optional)** | Typesense cluster as an optional fast-path; seeded from Postgres at deploy time via `seed-typesense.sh`; two keys stored separately — admin key for seeding, search-only key injected into the running service |
 | **BFF / integration layer** | Nginx frontend proxies `/api/*` to Cloud Run backend (TLS + SNI); Spring Boot orchestrates REST + DB |
 | **RESTful APIs / microservices** | Two independent Cloud Run services; paginated list endpoint + aggregates endpoint |
 | **Performance optimization** | Sub-second ILIKE search on 4 M rows via GIN index; pre-aggregated daily tables cut chart query time from seconds to milliseconds |
@@ -162,15 +165,23 @@ deploy.sh (auto) or scripts/bake-demo-snapshot.sh
 ./scripts/infra-down.sh  # stop local [1] or teardown GCP [2]
 ```
 
-`./scripts/deploy.sh` prompts for local or GCP on every run:
+`./scripts/deploy.sh` prompts for local or GCP. The GCP remote flow:
 
-```
-./scripts/deploy.sh
-  [1] Local  — starts Spring Boot on :8080 (uses local PG from .env)
-  [2] GCP    — docker build → push to Artifact Registry → pulumi up --yes
-                 provisions VPC · GCE Postgres VM · Cloud Run backend · Secret Manager
-                 auto-restores demo snapshot from GCS if orders table is empty
-```
+| Step | What happens |
+|---|---|
+| **Check GCP access** | Verifies `gcloud` CLI; checks active account — installs or authorises if missing |
+| **Resolve project & region** | Reads `gcloud config` for project ID and region |
+| **Build backend image (if needed)** | Hashes `src/` + `Dockerfile` + `build.gradle.kts` → 16-char tag; skips Cloud Build if already in Artifact Registry, otherwise submits build (Spring Boot compiled + containerised) |
+| **Check ADC** | App-default credentials used by Pulumi to call GCP APIs — runs `gcloud auth application-default login` if missing |
+
+**If backend is already live (image + Cloud Run + DB unchanged):**
+- Seeds Typesense — if opted in; prompts to override URL/keys
+- Redeploys frontend — if asked
+
+**Full deploy (otherwise):**
+- `pulumi up` — deploys the backend image to Cloud Run, provisions networking + IAM; runs DB migrations; seeds & syncs order data
+- Seeds Typesense — if opted in; prompts to override URL/keys
+- Redeploys frontend — if asked
 
 ---
 
