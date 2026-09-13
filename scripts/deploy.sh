@@ -1113,6 +1113,10 @@ _seed_neon() {
   tmp=$(mktemp /tmp/bake.XXXXXX)
   gcs_token=$(gcloud auth print-access-token 2>/dev/null || true)
   gcs_exists=$(_gcs_check "$gcs_token")
+  if [[ "${_FORCE_SNAPSHOT_UPDATE:-0}" == "1" ]]; then
+    printf '  Force-reseed requested — skipping GCS restore, running seed-large.sql...\n'
+    rm -f "$tmp"; _seed_neon_sql; return 0
+  fi
   if [[ "$gcs_exists" == "yes" ]]; then
     printf '  Downloading %s from GCS...\n' "$_GCS_BASENAME"
     gsutil cp "$DEMO_SNAPSHOT_GCS_URI" "$tmp" 2>/dev/null || \
