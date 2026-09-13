@@ -1250,15 +1250,19 @@ PYEOF
   printf '  No GCS/S3 snapshot — seeding %s orders via seed-large.sql (this takes several minutes)...\n' "$orders"
   # Use the direct (non-pooler) Neon URL: seeding 4M rows takes ~30 min and
   # PgBouncer in transaction mode drops silent connections after ~11 min.
-  local direct_url
+  local direct_url seed_sql
   direct_url=$(printf '%s' "$NEON_DATABASE_URL" \
     | sed 's/-pooler\././' \
     | sed 's/[&?]channel_binding=[^&]*//')
+  seed_sql=$(mktemp /tmp/seed.XXXXXX.sql)
+  sed \
+    -e "s|:'first_names_file'|'${script_dir}/data/first_names.txt'|g" \
+    -e "s|:'last_names_file'|'${script_dir}/data/last_names.txt'|g" \
+    "${script_dir}/seed-large.sql" > "$seed_sql"
   psql "$direct_url" \
     -v "orders=${orders}" \
-    -v "first_names_file=${script_dir}/data/first_names.txt" \
-    -v "last_names_file=${script_dir}/data/last_names.txt" \
-    -f "${script_dir}/seed-large.sql"
+    -f "$seed_sql"
+  rm -f "$seed_sql"
 }
 
 _download_from_s3_local() {
