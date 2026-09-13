@@ -1028,10 +1028,11 @@ _save_snapshot_via_cloud_build() {
   if gsutil -q stat "$DEMO_SNAPSHOT_GCS_URI" 2>/dev/null; then
     local snap_size
     snap_size=$(gsutil du "$DEMO_SNAPSHOT_GCS_URI" 2>/dev/null | awk '{print $1}')
-    if [[ "${snap_size:-0}" -gt 0 ]]; then
+    if [[ "${snap_size:-0}" -gt 0 && "${_FORCE_SNAPSHOT_UPDATE:-0}" != "1" ]]; then
       printf '  Snapshot already exists at %s — skipping Cloud Build dump.\n' "$DEMO_SNAPSHOT_GCS_URI"
       return 0
     fi
+    [[ "${_FORCE_SNAPSHOT_UPDATE:-0}" == "1" ]] && gsutil rm "$DEMO_SNAPSHOT_GCS_URI" 2>/dev/null || true
     printf '  Snapshot is 0 bytes (corrupt) — deleting and re-dumping via Cloud Build...\n'
     gsutil rm "$DEMO_SNAPSHOT_GCS_URI" 2>/dev/null || true
   fi
