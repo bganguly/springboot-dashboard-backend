@@ -50,7 +50,7 @@ public class OrderService {
         String safeSort = Set.of("placedAt", "total", "status", "customer", "id").contains(sort) ? sort : "placedAt";
         String safeDir = "asc".equalsIgnoreCase(dir) ? "ASC" : "DESC";
 
-        if (typesenseService.isEnabled() && q != null && !q.isBlank() && !"customer".equals(safeSort)) {
+        if (typesenseService.isAvailable() && q != null && !q.isBlank() && !"customer".equals(safeSort)) {
             TypesenseService.SearchResult ts = typesenseService.search(
                     q, page, pageSize, safeSort, safeDir,
                     status, regionCode, from, to, minTotal, maxTotal);

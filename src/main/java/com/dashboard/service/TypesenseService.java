@@ -4,10 +4,13 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
 import java.math.BigDecimal;
+import java.net.http.HttpClient;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -19,9 +22,14 @@ import java.util.stream.Collectors;
 @Service
 public class TypesenseService {
 
+    private static final long HEALTH_TTL_MS = 30_000;
+
     private final boolean enabled;
     private final RestClient restClient;
     private final ObjectMapper mapper = new ObjectMapper();
+
+    private volatile boolean typesenseAvailable = false;
+    private volatile long lastHealthCheck = 0;
 
     public record SearchResult(List<Integer> ids, long total) {}
 
@@ -30,15 +38,43 @@ public class TypesenseService {
             @Value("${typesense.url:}") String url,
             @Value("${typesense.api-key:}") String apiKey) {
         this.enabled = enabled;
-        this.restClient = enabled
-                ? RestClient.builder()
-                        .baseUrl(url)
-                        .defaultHeader("X-TYPESENSE-API-KEY", apiKey)
-                        .build()
-                : null;
+        if (enabled) {
+            var httpClient = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(3))
+                    .build();
+            var factory = new JdkClientHttpRequestFactory(httpClient);
+            factory.setReadTimeout(Duration.ofSeconds(5));
+            this.restClient = RestClient.builder()
+                    .baseUrl(url)
+                    .defaultHeader("X-TYPESENSE-API-KEY", apiKey)
+                    .requestFactory(factory)
+                    .build();
+        } else {
+            this.restClient = null;
+        }
     }
 
     public boolean isEnabled() { return enabled; }
+
+    public boolean isAvailable() {
+        if (!enabled) return false;
+        long now = System.currentTimeMillis();
+        if (now - lastHealthCheck > HEALTH_TTL_MS) {
+            lastHealthCheck = now;
+            typesenseAvailable = probe();
+        }
+        return typesenseAvailable;
+    }
+
+    private boolean probe() {
+        try {
+            restClient.get().uri("/health").retrieve().toBodilessEntity();
+            return true;
+        } catch (Exception e) {
+            log.debug("Typesense health probe failed: {}", e.getMessage());
+            return false;
+        }
+    }
 
     public SearchResult search(String q, int page, int perPage,
                                String sort, String dir,
