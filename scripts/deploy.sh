@@ -1101,9 +1101,16 @@ _seed_neon() {
   fi
   if [[ -s "$tmp" ]]; then
     printf '  Running pg_restore against Neon...\n'
-    pg_restore --no-owner --no-privileges --clean --if-exists -d "$NEON_DATABASE_URL" "$tmp" || true
-    rm -f "$tmp"
-    printf 'Seeding complete.\n'
+    if pg_restore --no-owner --no-privileges --clean --if-exists -d "$NEON_DATABASE_URL" "$tmp"; then
+      rm -f "$tmp"
+      printf 'Seeding complete.\n'
+      return 0
+    else
+      printf '  pg_restore failed (incompatible format?) — deleting stale snapshot and falling back to seed-large.sql...\n'
+      rm -f "$tmp"
+      gsutil rm "$DEMO_SNAPSHOT_GCS_URI" 2>/dev/null || true
+      _seed_neon_sql
+    fi
   fi
 }
 
