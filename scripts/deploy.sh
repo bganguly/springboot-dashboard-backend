@@ -39,6 +39,7 @@ _GCS_BASENAME=""
 USE_TYPESENSE="false"
 TYPESENSE_URL=""
 TYPESENSE_API_KEY=""
+TYPESENSE_SEARCH_KEY=""
 
 # ── Utility ───────────────────────────────────────────────────────────────────
 
@@ -235,10 +236,13 @@ _prompt_typesense() {
         printf '  Typesense URL:\n  > '
         read -r TYPESENSE_URL
         [[ -n "$TYPESENSE_URL" ]] || { printf 'Typesense URL is required.\n'; exit 1; }
-        printf '  Typesense API key:\n  > '
+        printf '  Admin API key:\n  > '
         read -rs TYPESENSE_API_KEY; printf '\n'
-        [[ -n "$TYPESENSE_API_KEY" ]] || { printf 'Typesense API key is required.\n'; exit 1; }
-        printf 'TYPESENSE_URL=%s\nTYPESENSE_API_KEY=%s\n' "$TYPESENSE_URL" "$TYPESENSE_API_KEY" > "$TS_CREDS_FILE"
+        [[ -n "$TYPESENSE_API_KEY" ]] || { printf 'Admin API key is required.\n'; exit 1; }
+        printf '  Search-only key:\n  > '
+        read -rs TYPESENSE_SEARCH_KEY; printf '\n'
+        [[ -n "$TYPESENSE_SEARCH_KEY" ]] || { printf 'Search-only key is required.\n'; exit 1; }
+        printf 'TYPESENSE_URL=%s\nTYPESENSE_API_KEY=%s\nTYPESENSE_SEARCH_KEY=%s\n' "$TYPESENSE_URL" "$TYPESENSE_API_KEY" "$TYPESENSE_SEARCH_KEY" > "$TS_CREDS_FILE"
         chmod 600 "$TS_CREDS_FILE"
         printf '  Saved to .typesense-creds\n'
         ;;
@@ -260,11 +264,15 @@ _prompt_typesense() {
   read -r TYPESENSE_URL
   [[ -n "$TYPESENSE_URL" ]] || { printf 'Typesense URL is required.\n'; exit 1; }
 
-  printf '  Typesense API key:\n  > '
+  printf '  Admin API key:\n  > '
   read -rs TYPESENSE_API_KEY; printf '\n'
-  [[ -n "$TYPESENSE_API_KEY" ]] || { printf 'Typesense API key is required.\n'; exit 1; }
+  [[ -n "$TYPESENSE_API_KEY" ]] || { printf 'Admin API key is required.\n'; exit 1; }
 
-  printf 'TYPESENSE_URL=%s\nTYPESENSE_API_KEY=%s\n' "$TYPESENSE_URL" "$TYPESENSE_API_KEY" > "$TS_CREDS_FILE"
+  printf '  Search-only key:\n  > '
+  read -rs TYPESENSE_SEARCH_KEY; printf '\n'
+  [[ -n "$TYPESENSE_SEARCH_KEY" ]] || { printf 'Search-only key is required.\n'; exit 1; }
+
+  printf 'TYPESENSE_URL=%s\nTYPESENSE_API_KEY=%s\nTYPESENSE_SEARCH_KEY=%s\n' "$TYPESENSE_URL" "$TYPESENSE_API_KEY" "$TYPESENSE_SEARCH_KEY" > "$TS_CREDS_FILE"
   chmod 600 "$TS_CREDS_FILE"
   printf '  Saved to .typesense-creds\n'
 }
@@ -437,6 +445,7 @@ _local_start_backend() {
     TYPESENSE_ENABLED="${USE_TYPESENSE}" \
     TYPESENSE_URL="${TYPESENSE_URL}" \
     TYPESENSE_API_KEY="${TYPESENSE_API_KEY}" \
+    TYPESENSE_SEARCH_KEY="${TYPESENSE_SEARCH_KEY:-${TYPESENSE_API_KEY}}" \
     ./gradlew bootRun > "$log" 2>&1 &
   BACKEND_PID=$!
   printf '  PID %s — log: %s\n' "$BACKEND_PID" "$log"
@@ -857,6 +866,7 @@ _deploy_pulumi() {
   fi
   if [[ "$USE_TYPESENSE" == "true" && -n "${TYPESENSE_API_KEY:-}" ]]; then
     pulumi config set --secret dashboard:typesenseApiKey "$TYPESENSE_API_KEY" --stack "$DEPLOY_MODE"
+    pulumi config set --secret dashboard:typesenseSearchKey "${TYPESENSE_SEARCH_KEY:-${TYPESENSE_API_KEY}}" --stack "$DEPLOY_MODE"
   fi
   _ensure_neon_secret_version
   _flyway_repair_neon

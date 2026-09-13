@@ -20,7 +20,8 @@ const useNeon = config.getBoolean("useNeon") ?? false;
 const neonDatabaseUrl = useNeon ? config.requireSecret("neonDatabaseUrl") : undefined;
 const typesenseEnabled = config.get("typesenseEnabled") ?? "false";
 const typesenseUrl     = config.get("typesenseUrl")     ?? "";
-const typesenseApiKey  = typesenseEnabled === "true" ? config.requireSecret("typesenseApiKey") : pulumi.output("");
+const typesenseApiKey    = typesenseEnabled === "true" ? config.requireSecret("typesenseApiKey")    : pulumi.output("");
+const typesenseSearchKey = typesenseEnabled === "true" ? config.requireSecret("typesenseSearchKey") : pulumi.output("");
 
 // ── APIs ──────────────────────────────────────────────────────────────────────
 const apis = [
@@ -203,7 +204,8 @@ if (backendRuntime !== "gke") {
           { name: "SPRING_FLYWAY_SCHEMAS", value: "public" },
           { name: "TYPESENSE_ENABLED",  value: typesenseEnabled },
           { name: "TYPESENSE_URL",      value: typesenseUrl },
-          { name: "TYPESENSE_API_KEY",  value: typesenseApiKey },
+          { name: "TYPESENSE_API_KEY",    value: typesenseApiKey },
+          { name: "TYPESENSE_SEARCH_KEY", value: typesenseSearchKey },
         ],
         startupProbe: {
           tcpSocket: { port: 8080 },

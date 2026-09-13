@@ -36,7 +36,8 @@ public class TypesenseService {
     public TypesenseService(
             @Value("${typesense.enabled:false}") boolean enabled,
             @Value("${typesense.url:}") String url,
-            @Value("${typesense.api-key:}") String apiKey) {
+            @Value("${typesense.api-key:}") String apiKey,
+            @Value("${typesense.search-key:}") String searchKey) {
         this.enabled = enabled;
         if (enabled) {
             var httpClient = HttpClient.newBuilder()
@@ -44,9 +45,10 @@ public class TypesenseService {
                     .build();
             var factory = new JdkClientHttpRequestFactory(httpClient);
             factory.setReadTimeout(Duration.ofSeconds(5));
+            String effectiveKey = (searchKey != null && !searchKey.isBlank()) ? searchKey : apiKey;
             this.restClient = RestClient.builder()
                     .baseUrl(url)
-                    .defaultHeader("X-TYPESENSE-API-KEY", apiKey)
+                    .defaultHeader("X-TYPESENSE-API-KEY", effectiveKey)
                     .requestFactory(factory)
                     .build();
         } else {
