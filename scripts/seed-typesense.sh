@@ -38,6 +38,7 @@ fi
 
 [[ -n "${TYPESENSE_URL:-}" ]] || { printf 'TYPESENSE_URL not set — create .typesense-creds or export it\n' >&2; exit 1; }
 [[ -n "${TYPESENSE_API_KEY:-}" ]] || { printf 'TYPESENSE_API_KEY not set — create .typesense-creds or export it\n' >&2; exit 1; }
+[[ "$TYPESENSE_URL" == http://* || "$TYPESENSE_URL" == https://* ]] || TYPESENSE_URL="https://${TYPESENSE_URL}"
 
 if [[ -z "$DB_URL" ]]; then
   for env_file in "$ROOT_DIR/.env.gcp.full" "$ROOT_DIR/.env.gcp.lite" "$ROOT_DIR/.env.local"; do

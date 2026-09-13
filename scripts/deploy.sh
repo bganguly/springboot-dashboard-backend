@@ -236,6 +236,7 @@ _prompt_typesense() {
         printf '  Typesense URL:\n  > '
         read -r TYPESENSE_URL
         [[ -n "$TYPESENSE_URL" ]] || { printf 'Typesense URL is required.\n'; exit 1; }
+        [[ "$TYPESENSE_URL" == http://* || "$TYPESENSE_URL" == https://* ]] || TYPESENSE_URL="https://${TYPESENSE_URL}"
         printf '  Admin API key:\n  > '
         read -rs TYPESENSE_API_KEY; printf '\n'
         [[ -n "$TYPESENSE_API_KEY" ]] || { printf 'Admin API key is required.\n'; exit 1; }
@@ -263,6 +264,7 @@ _prompt_typesense() {
   printf '  Typesense URL (e.g. https://your-cluster.a1.typesense.net):\n  > '
   read -r TYPESENSE_URL
   [[ -n "$TYPESENSE_URL" ]] || { printf 'Typesense URL is required.\n'; exit 1; }
+  [[ "$TYPESENSE_URL" == http://* || "$TYPESENSE_URL" == https://* ]] || TYPESENSE_URL="https://${TYPESENSE_URL}"
 
   printf '  Admin API key:\n  > '
   read -rs TYPESENSE_API_KEY; printf '\n'
