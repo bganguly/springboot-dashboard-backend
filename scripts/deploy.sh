@@ -1108,8 +1108,8 @@ _ensure_schema_neon() {
   t1=$(psql "$NEON_DATABASE_URL" -t -c "SELECT to_regclass('public.orders');"     2>/dev/null | tr -d ' \n')
   t2=$(psql "$NEON_DATABASE_URL" -t -c "SELECT to_regclass('public.order_items');" 2>/dev/null | tr -d ' \n')
   local script_dir migration_dir
-  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  migration_dir="${script_dir}/../src/main/resources/db/migration"
+  script_dir="${ROOT_DIR}/scripts"
+  migration_dir="${ROOT_DIR}/src/main/resources/db/migration"
   if [[ "$t1" != "" && "$t1" != "NULL" && "$t2" != "" && "$t2" != "NULL" ]]; then
     local mig_count expected_count
     mig_count=$(psql "$NEON_DATABASE_URL" -t -c \
@@ -1183,8 +1183,8 @@ _seed_neon_sql() {
   local orders
   orders=$([[ "$DEPLOY_MODE" == "lite" ]] && printf '100000' || printf '4000000')
   local script_dir migration_dir
-  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  migration_dir="${script_dir}/../src/main/resources/db/migration"
+  script_dir="${ROOT_DIR}/scripts"
+  migration_dir="${ROOT_DIR}/src/main/resources/db/migration"
   printf '  Resetting schema before seed...\n'
   psql "$NEON_DATABASE_URL" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
   for f in $(ls "$migration_dir"/V*.sql | sort -V); do
