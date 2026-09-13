@@ -50,11 +50,12 @@ public class OrderService {
         String safeSort = Set.of("placedAt", "total", "status", "customer", "id").contains(sort) ? sort : "placedAt";
         String safeDir = "asc".equalsIgnoreCase(dir) ? "ASC" : "DESC";
 
-        if (typesenseService.isEnabled() && q != null && !q.isBlank()) {
-            TypesenseService.SearchResult ts = typesenseService.search(q, page, pageSize);
+        if (typesenseService.isEnabled() && q != null && !q.isBlank() && !"customer".equals(safeSort)) {
+            TypesenseService.SearchResult ts = typesenseService.search(
+                    q, page, pageSize, safeSort, safeDir,
+                    status, regionCode, from, to, minTotal, maxTotal);
             if (ts != null) {
-                return listOrdersFromTypesense(ts, page, pageSize, safeSort, safeDir,
-                        status, regionCode, from, to, minTotal, maxTotal);
+                return listOrdersFromTypesense(ts, page, pageSize, safeSort, safeDir);
             }
             // Typesense failed — fall through to Postgres
         }
@@ -395,9 +396,7 @@ public class OrderService {
 
     private OrderListResult listOrdersFromTypesense(
             TypesenseService.SearchResult ts,
-            int page, int pageSize, String safeSort, String safeDir,
-            String status, String regionCode, String from, String to,
-            BigDecimal minTotal, BigDecimal maxTotal) {
+            int page, int pageSize, String safeSort, String safeDir) {
 
         if (ts.ids().isEmpty()) {
             return new OrderListResult(List.of(), page, pageSize, 0, 0, false);
@@ -406,21 +405,16 @@ public class OrderService {
         int totalPages = (int) Math.ceil((double) total / pageSize);
 
         String orderBy = switch (safeSort) {
-            case "customer" -> "c.\"firstName\" " + safeDir + ", c.\"lastName\" " + safeDir + ", o.\"placedAt\" DESC";
-            case "total"    -> "o.total " + safeDir + ", o.\"placedAt\" DESC";
-            case "status"   -> "o.status " + safeDir + ", o.\"placedAt\" DESC";
-            case "id"       -> "o.id " + safeDir;
-            default         -> "o.\"placedAt\" " + safeDir;
+            case "total"  -> "o.total " + safeDir + ", o.\"placedAt\" DESC";
+            case "status" -> "o.status " + safeDir + ", o.\"placedAt\" DESC";
+            case "id"     -> "o.id " + safeDir;
+            default       -> "o.\"placedAt\" " + safeDir;
         };
 
         var params = new MapSqlParameterSource();
-        // Non-text filters still applied in Postgres on the Typesense-returned IDs
-        var nonTextWhere = buildWhere(null, status, regionCode, from, to, minTotal, maxTotal, params);
         params.addValue("tsIds", ts.ids().toArray(new Integer[0]));
-        String where = nonTextWhere.isEmpty()
-                ? "WHERE o.id = ANY(:tsIds)"
-                : nonTextWhere + " AND o.id = ANY(:tsIds)";
 
+        // Typesense already applied all filters — Postgres is a pure PK lookup + JOIN
         String dataSql = """
                 SELECT o.id, o.status, o.total, o.currency, o.notes, o."placedAt",
                        c.id AS c_id, c.email, c."firstName", c."lastName", c.phone,
@@ -428,7 +422,8 @@ public class OrderService {
                 FROM orders o
                 JOIN customers c ON c.id = o."customerId"
                 JOIN regions r ON r.id = o."regionId"
-                """ + where + " ORDER BY " + orderBy;
+                WHERE o.id = ANY(:tsIds)
+                """ + "ORDER BY " + orderBy;
 
         List<Map<String, Object>> rows = jdbc.queryForList(dataSql, params);
         return toResult(rows, page, pageSize, total, totalPages, false);

@@ -7,8 +7,13 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -35,19 +40,28 @@ public class TypesenseService {
 
     public boolean isEnabled() { return enabled; }
 
-    /**
-     * Returns the IDs and total for the given page, or null on any failure
-     * (caller falls back to Postgres ILIKE).
-     */
-    public SearchResult search(String q, int page, int perPage) {
+    public SearchResult search(String q, int page, int perPage,
+                               String sort, String dir,
+                               String status, String regionCode,
+                               String from, String to,
+                               BigDecimal minTotal, BigDecimal maxTotal) {
         try {
+            String sortBy = buildSortBy(sort, dir);
+            String filterBy = buildFilterBy(status, regionCode, from, to, minTotal, maxTotal);
+
             String body = restClient.get()
-                    .uri(u -> u.path("/collections/orders/documents/search")
-                            .queryParam("q", q)
-                            .queryParam("query_by", "firstName,lastName,notes")
-                            .queryParam("page", page)
-                            .queryParam("per_page", perPage)
-                            .build())
+                    .uri(u -> {
+                        var b = u.path("/collections/orders/documents/search")
+                                .queryParam("q", q)
+                                .queryParam("query_by", "firstName,lastName,notes")
+                                .queryParam("sort_by", sortBy)
+                                .queryParam("page", page)
+                                .queryParam("per_page", perPage);
+                        if (!filterBy.isEmpty()) {
+                            b = b.queryParam("filter_by", filterBy);
+                        }
+                        return b.build();
+                    })
                     .retrieve()
                     .body(String.class);
 
@@ -62,5 +76,52 @@ public class TypesenseService {
             log.warn("Typesense search failed — falling back to Postgres: {}", e.getMessage());
             return null;
         }
+    }
+
+    private String buildSortBy(String sort, String dir) {
+        String d = "asc".equalsIgnoreCase(dir) ? "asc" : "desc";
+        return switch (sort != null ? sort : "") {
+            case "total"  -> "total:" + d + ",placedAt:desc";
+            case "id"     -> "id:" + d;
+            case "status" -> "status:" + d + ",placedAt:desc";
+            default       -> "placedAt:" + d;
+        };
+    }
+
+    private String buildFilterBy(String status, String regionCode,
+                                  String from, String to,
+                                  BigDecimal minTotal, BigDecimal maxTotal) {
+        List<String> filters = new ArrayList<>();
+
+        if (status != null && !status.isBlank()) {
+            String[] parts = Arrays.stream(status.split(","))
+                    .map(String::strip).filter(s -> !s.isEmpty()).toArray(String[]::new);
+            String joined = String.join(",", parts);
+            filters.add(parts.length == 1 ? "status:=" + joined : "status:=[" + joined + "]");
+        }
+        if (regionCode != null && !regionCode.isBlank()) {
+            String[] parts = Arrays.stream(regionCode.split(","))
+                    .map(String::strip).filter(s -> !s.isEmpty()).toArray(String[]::new);
+            String joined = String.join(",", parts);
+            filters.add(parts.length == 1 ? "regionCode:=" + joined : "regionCode:=[" + joined + "]");
+        }
+        if (from != null && !from.isBlank()) {
+            long epoch = LocalDate.parse(from.substring(0, 10))
+                    .atStartOfDay(ZoneOffset.UTC).toEpochSecond();
+            filters.add("placedAt:>=" + epoch);
+        }
+        if (to != null && !to.isBlank()) {
+            long epoch = LocalDate.parse(to.substring(0, 10)).plusDays(1)
+                    .atStartOfDay(ZoneOffset.UTC).toEpochSecond() - 1;
+            filters.add("placedAt:<=" + epoch);
+        }
+        if (minTotal != null) {
+            filters.add("total:>=" + minTotal.toPlainString());
+        }
+        if (maxTotal != null) {
+            filters.add("total:<=" + maxTotal.toPlainString());
+        }
+
+        return String.join(" && ", filters);
     }
 }
