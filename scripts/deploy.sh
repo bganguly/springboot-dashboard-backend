@@ -1275,6 +1275,8 @@ PYEOF
     -v "orders=${orders}" \
     -f "$seed_sql"
   rm -f "$seed_sql"
+  printf '  Running ANALYZE to update planner statistics...\n'
+  psql "$direct_url" -c "ANALYZE orders, customers;"
 }
 
 _download_from_s3_local() {
