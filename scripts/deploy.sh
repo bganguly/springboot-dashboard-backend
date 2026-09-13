@@ -1265,7 +1265,8 @@ PYEOF
   direct_url=$(printf '%s' "$NEON_DATABASE_URL" \
     | sed 's/-pooler\././' \
     | sed 's/[&?]channel_binding=[^&]*//')
-  seed_sql=$(mktemp /tmp/seed.XXXXXX.sql)
+  rm -f /tmp/seed.XXXXXX.sql
+  seed_sql=$(mktemp /tmp/seed.XXXXXX)
   sed \
     -e "s|:'first_names_file'|'${script_dir}/data/first_names.txt'|g" \
     -e "s|:'last_names_file'|'${script_dir}/data/last_names.txt'|g" \
