@@ -50,7 +50,7 @@ JOIN _last_names  ln ON ln.id = 1 + ((g - 1) % 473);
 \echo Seeding :orders orders in batches of :batch_size...
 -- Disable per-row trigger during bulk insert; search_text is populated in a
 -- single batch UPDATE below (avoids 2 SELECT lookups per row × 4M rows).
-ALTER TABLE orders DISABLE TRIGGER ALL;
+ALTER TABLE orders DISABLE TRIGGER USER;
 SET seed.orders = :'orders';
 SET seed.batch_size = :'batch_size';
 SET seed.customers = :'customers';
@@ -104,7 +104,7 @@ FROM customers c, regions r
 WHERE c.id = o."customerId"
   AND r.id = o."regionId";
 
-ALTER TABLE orders ENABLE TRIGGER ALL;
+ALTER TABLE orders ENABLE TRIGGER USER;
 
 \echo Seeding order_items in batches of :batch_size...
 DO $$
