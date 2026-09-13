@@ -22,8 +22,18 @@ public class FlywayConfig {
                 dropStaleHistoryTable(flyway);
                 baselineIfDdlPreApplied(flyway);
             }
-            flyway.repair();
-            flyway.migrate();
+            // V9 is pre-inserted into flyway_schema_history at a higher
+            // installed_rank than V10 (deploy.sh's Python sort assigns V10→rank1,
+            // V9→rank10). Flyway 12 validate() treats this out-of-order position
+            // as "not applied" when outOfOrder=false. Rebuild here to guarantee
+            // both flags are set regardless of Spring Boot / Flyway API mapping.
+            Flyway f = Flyway.configure()
+                    .configuration(flyway.getConfiguration())
+                    .outOfOrder(true)
+                    .validateOnMigrate(false)
+                    .load();
+            f.repair();
+            f.migrate();
         };
     }
 
