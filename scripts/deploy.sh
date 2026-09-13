@@ -971,7 +971,6 @@ _neon_premigrate_heavy() {
       || { printf '    V10 history record insert failed\n'; return 1; }
     printf '  V10 pre-migration complete.\n'
   fi
-  _dump_neon_to_gcs
 }
 
 _dump_neon_to_gcs() {
@@ -1017,8 +1016,14 @@ _check_db_row_count() {
 _save_snapshot_via_cloud_build() {
   [[ -z "${NEON_DATABASE_URL:-}" ]] && return 0
   if gsutil -q stat "$DEMO_SNAPSHOT_GCS_URI" 2>/dev/null; then
-    printf '  Snapshot already exists at %s — skipping Cloud Build dump.\n' "$DEMO_SNAPSHOT_GCS_URI"
-    return 0
+    local snap_size
+    snap_size=$(gsutil du "$DEMO_SNAPSHOT_GCS_URI" 2>/dev/null | awk '{print $1}')
+    if [[ "${snap_size:-0}" -gt 0 ]]; then
+      printf '  Snapshot already exists at %s — skipping Cloud Build dump.\n' "$DEMO_SNAPSHOT_GCS_URI"
+      return 0
+    fi
+    printf '  Snapshot is 0 bytes (corrupt) — deleting and re-dumping via Cloud Build...\n'
+    gsutil rm "$DEMO_SNAPSHOT_GCS_URI" 2>/dev/null || true
   fi
   local direct_url
   direct_url=$(printf '%s' "$NEON_DATABASE_URL" \
@@ -1111,6 +1116,11 @@ _seed_neon() {
       gsutil rm "$DEMO_SNAPSHOT_GCS_URI" 2>/dev/null || true
       _seed_neon_sql
     fi
+  else
+    printf '  Downloaded snapshot is empty — deleting and falling back to seed-large.sql...\n'
+    rm -f "$tmp"
+    gsutil rm "$DEMO_SNAPSHOT_GCS_URI" 2>/dev/null || true
+    _seed_neon_sql
   fi
 }
 
