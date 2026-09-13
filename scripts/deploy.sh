@@ -915,6 +915,10 @@ _neon_premigrate_heavy() {
     max_id=$(psql "$direct_url" -Atqc "SELECT COALESCE(MAX(id),0) FROM orders;" | tr -d ' \n')
     total_batches=$(( (max_id + batch_size - 1) / batch_size ))
     printf '    max order id: %s  batches: %s\n' "$max_id" "$total_batches"
+    if [[ "$max_id" -eq 0 ]]; then
+      printf '  Orders table empty — deferring V9 backfill until after seed.\n'
+      return 0
+    fi
 
     printf '    1/4 order_category_facts\n'; t0=$(date +%s)
     batch_num=1; batch_start=1
@@ -1767,6 +1771,7 @@ _setup_db_post_pulumi
 _resolve_snapshot_vars
 _check_db_row_count
 _seed_db
+[[ "$USE_NEON" == "true" ]] && _neon_premigrate_heavy
 [[ "$USE_NEON" == "true" && "${_DB_ORDERS:-0}" -gt 0 ]] && _save_snapshot_to_gcs
 _sync_daily_order_count
 
