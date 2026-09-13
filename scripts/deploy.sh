@@ -1063,7 +1063,7 @@ _save_snapshot_to_gcs() {
   local gcs_token gcs_exists
   gcs_token=$(gcloud auth print-access-token 2>/dev/null || true)
   gcs_exists=$(_gcs_check "$gcs_token")
-  [[ "$gcs_exists" == "yes" ]] && return 0
+  if [[ "$gcs_exists" == "yes" && "${_FORCE_SNAPSHOT_UPDATE:-0}" != "1" ]]; then return 0; fi
   printf '  Saving snapshot → GCS (%s)...\n' "$_GCS_BASENAME"
   _save_snapshot_via_cloud_build
 }
@@ -1078,6 +1078,7 @@ _seed_db() {
     if [[ "${_use_existing:-Y}" =~ ^[Nn] ]]; then
       printf '  Reseeding...\n'
       _DB_ORDERS=0
+      _FORCE_SNAPSHOT_UPDATE=1
     else
       printf 'Skipping seed.\n'; return 0
     fi
