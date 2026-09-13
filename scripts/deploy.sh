@@ -1827,6 +1827,7 @@ else
   BACKEND_URL=$(cd "$ROOT_DIR/infra" && pulumi stack output backendUrl 2>/dev/null || true)
 fi
 
+_STEP="post-deploy"
 _patch_frontend_backend_url
 _save_env_file
 
@@ -1847,7 +1848,7 @@ _warn_neon_storage() {
     2>/dev/null | tr -d ' \n')
   [[ "${size_mb:-0}" =~ ^[0-9]+$ ]] || size_mb=0
   printf '\nNeon storage: ~%s MB / 512 MB free-tier cap\n' "$size_mb"
-  if [[ "$size_mb" -gt 400 ]]; then
+  if [[ "${size_mb:-0}" -gt 400 ]]; then
     printf 'WARNING: approaching 512 MB limit — consider one of:\n'
     printf '  1. Truncate to ~250K orders:\n'
     printf '       psql "$NEON_DATABASE_URL" -v orders=250000 -f scripts/seed-large.sql\n'
