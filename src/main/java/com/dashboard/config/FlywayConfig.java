@@ -22,6 +22,7 @@ public class FlywayConfig {
                 dropStaleHistoryTable(flyway);
                 baselineIfDdlPreApplied(flyway);
             }
+            flyway.repair();
             flyway.migrate();
         };
     }
