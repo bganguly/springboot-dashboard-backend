@@ -1012,6 +1012,10 @@ _check_db_row_count() {
 
 _save_snapshot_via_cloud_build() {
   [[ -z "${NEON_DATABASE_URL:-}" ]] && return 0
+  if gsutil -q stat "$DEMO_SNAPSHOT_GCS_URI" 2>/dev/null; then
+    printf '  Snapshot already exists at %s — skipping Cloud Build dump.\n' "$DEMO_SNAPSHOT_GCS_URI"
+    return 0
+  fi
   local direct_url
   direct_url=$(printf '%s' "$NEON_DATABASE_URL" \
     | sed 's/-pooler\././' \
