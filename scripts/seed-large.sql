@@ -90,19 +90,40 @@ BEGIN
   END LOOP;
 END $$;
 
-\echo Populating search_text (bulk JOIN — triggers still disabled)...
-UPDATE orders o
-SET search_text =
-  c."firstName" || ' ' || c."lastName" || ' ' ||
-  COALESCE(o.notes, '') || ' ' ||
-  o.total::text || ' ' ||
-  o.id::text || ' ' ||
-  o.status::text || ' ' ||
-  r.code || ' ' || r.name || ' ' ||
-  o."placedAt"::date::text
-FROM customers c, regions r
-WHERE c.id = o."customerId"
-  AND r.id = o."regionId";
+\echo Populating search_text in batches of :batch_size...
+DO $$
+DECLARE
+  total_orders integer := current_setting('seed.orders')::integer;
+  batch_size   integer := current_setting('seed.batch_size')::integer;
+  start_id     integer := 1;
+  end_id       integer;
+  batch_started timestamptz;
+BEGIN
+  WHILE start_id <= total_orders LOOP
+    end_id := LEAST(start_id + batch_size - 1, total_orders);
+    batch_started := clock_timestamp();
+
+    UPDATE orders o
+    SET search_text =
+      c."firstName" || ' ' || c."lastName" || ' ' ||
+      COALESCE(o.notes, '') || ' ' ||
+      o.total::text || ' ' ||
+      o.id::text || ' ' ||
+      o.status::text || ' ' ||
+      r.code || ' ' || r.name || ' ' ||
+      o."placedAt"::date::text
+    FROM customers c, regions r
+    WHERE c.id = o."customerId"
+      AND r.id = o."regionId"
+      AND o.id >= start_id
+      AND o.id <= end_id;
+
+    RAISE NOTICE 'search_text updated through % / % in %',
+      end_id, total_orders, clock_timestamp() - batch_started;
+
+    start_id := end_id + 1;
+  END LOOP;
+END $$;
 
 ALTER TABLE orders ENABLE TRIGGER USER;
 
