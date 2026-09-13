@@ -36,6 +36,9 @@ BAKE_VM_SUBNET=""
 BAKE_SECRET_NAME=""
 S3_SOURCE_URI=""
 _GCS_BASENAME=""
+USE_TYPESENSE="false"
+TYPESENSE_URL=""
+TYPESENSE_API_KEY=""
 
 # ── Utility ───────────────────────────────────────────────────────────────────
 
@@ -180,6 +183,62 @@ _prompt_database_backend() {
     printf '  (postgresql://user:pass@ep-xxx.neon.tech/dbname?sslmode=require):\n  > '
     read -r NEON_DATABASE_URL
     [[ -n "$NEON_DATABASE_URL" ]] || { printf 'Neon URL is required.\n'; exit 1; }
+  fi
+}
+
+_prompt_typesense() {
+  local env_file
+  if [[ "$_TARGET" == "remote" ]]; then
+    env_file="$ROOT_DIR/.env.gcp.${DEPLOY_MODE}"
+  else
+    env_file="$ROOT_DIR/.env.local"
+  fi
+
+  local saved_enabled="" saved_url="" saved_key=""
+  if [[ -f "$env_file" ]]; then
+    saved_enabled=$(grep -E '^USE_TYPESENSE=' "$env_file" | cut -d= -f2- | tr -d '"' || true)
+    saved_url=$(grep -E '^TYPESENSE_URL=' "$env_file" | cut -d= -f2- | tr -d '"' || true)
+    saved_key=$(grep -E '^TYPESENSE_API_KEY=' "$env_file" | cut -d= -f2- | tr -d '"' || true)
+  fi
+
+  if [[ -n "$saved_enabled" ]]; then
+    USE_TYPESENSE="$saved_enabled"
+    TYPESENSE_URL="$saved_url"
+    TYPESENSE_API_KEY="$saved_key"
+    local ts_label
+    [[ "$USE_TYPESENSE" == "true" ]] \
+      && ts_label="Typesense (${TYPESENSE_URL})" \
+      || ts_label="Postgres ILIKE (default)"
+    printf '\n  Search: %s  [cached — using saved setting]\n' "$ts_label"
+    printf '  Continue with saved? [Y/n]: '
+    read -r _TS_REPLACE
+    case "${_TS_REPLACE:-Y}" in
+      [Nn]*) saved_enabled="" ;;
+    esac
+    [[ -n "$saved_enabled" ]] && return 0
+  fi
+
+  printf '\n  Search backend:\n'
+  printf '  [Y] Typesense  — sub-5ms name+notes search (requires a running Typesense instance with orders indexed)\n'
+  printf '  [N] Postgres ILIKE via GIN trigram index (current default)\n'
+  printf '\nUse Typesense? [y/N]: '
+  read -r _TS
+  case "${_TS:-N}" in
+    [Yy]*) USE_TYPESENSE="true" ;;
+    *)     USE_TYPESENSE="false"; return 0 ;;
+  esac
+
+  printf '  Typesense URL (e.g. http://localhost:8108):\n  > '
+  read -r TYPESENSE_URL
+  [[ -n "$TYPESENSE_URL" ]] || { printf 'Typesense URL is required.\n'; exit 1; }
+
+  printf '  Typesense API key:\n  > '
+  read -r TYPESENSE_API_KEY
+  [[ -n "$TYPESENSE_API_KEY" ]] || { printf 'Typesense API key is required.\n'; exit 1; }
+
+  if [[ "$_TARGET" == "local" ]]; then
+    printf 'USE_TYPESENSE=%s\nTYPESENSE_URL=%s\nTYPESENSE_API_KEY=%s\n' \
+      "$USE_TYPESENSE" "$TYPESENSE_URL" "$TYPESENSE_API_KEY" >> "$env_file"
   fi
 }
 
@@ -346,7 +405,11 @@ _local_start_backend() {
   local db_url="$1" log="$ROOT_DIR/backend.log"
   printf '\n=== starting backend :8080 ===\n'
   "$ROOT_DIR/scripts/free-port.sh" 8080
-  DATABASE_URL="$db_url" ./gradlew bootRun > "$log" 2>&1 &
+  DATABASE_URL="$db_url" \
+    TYPESENSE_ENABLED="${USE_TYPESENSE}" \
+    TYPESENSE_URL="${TYPESENSE_URL}" \
+    TYPESENSE_API_KEY="${TYPESENSE_API_KEY}" \
+    ./gradlew bootRun > "$log" 2>&1 &
   BACKEND_PID=$!
   printf '  PID %s — log: %s\n' "$BACKEND_PID" "$log"
   for _i in $(seq 1 60); do
@@ -695,6 +758,9 @@ config:
   dashboard:backendImage: ${IMAGE}
   dashboard:backendRuntime: ${BACKEND_RUNTIME}
   dashboard:useNeon: ${USE_NEON}
+  dashboard:typesenseEnabled: ${USE_TYPESENSE}
+  dashboard:typesenseUrl: ${TYPESENSE_URL}
+  dashboard:typesenseApiKey: ${TYPESENSE_API_KEY}
 PYAML
   else
     cat > "Pulumi.${DEPLOY_MODE}.yaml" <<PYAML
@@ -707,6 +773,9 @@ config:
   dashboard:backendImage: ${IMAGE}
   dashboard:backendRuntime: ${BACKEND_RUNTIME}
   dashboard:useNeon: ${USE_NEON}
+  dashboard:typesenseEnabled: ${USE_TYPESENSE}
+  dashboard:typesenseUrl: ${TYPESENSE_URL}
+  dashboard:typesenseApiKey: ${TYPESENSE_API_KEY}
 PYAML
   fi
 }
@@ -1606,6 +1675,9 @@ GCP_PROJECT=${existing_gcp_project:-${GCP_PROJECT}}
 GCP_REGION=${existing_gcp_region:-${GCP_REGION}}
 USE_NEON=${USE_NEON}
 NEON_DATABASE_URL=${NEON_DATABASE_URL}
+USE_TYPESENSE=${USE_TYPESENSE}
+TYPESENSE_URL=${TYPESENSE_URL}
+TYPESENSE_API_KEY=${TYPESENSE_API_KEY}
 EOF
 }
 
@@ -1619,6 +1691,9 @@ GCP_PROJECT=${GCP_PROJECT}
 GCP_REGION=${GCP_REGION}
 USE_NEON=${USE_NEON}
 NEON_DATABASE_URL=${NEON_DATABASE_URL}
+USE_TYPESENSE=${USE_TYPESENSE}
+TYPESENSE_URL=${TYPESENSE_URL}
+TYPESENSE_API_KEY=${TYPESENSE_API_KEY}
 EOF
 }
 
@@ -1770,6 +1845,7 @@ _run_preflight
 _prompt_menu
 _prompt_backend_runtime
 _prompt_database_backend
+_prompt_typesense
 _save_user_inputs
 _print_cost_summary
 

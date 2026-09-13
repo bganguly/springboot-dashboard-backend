@@ -18,6 +18,9 @@ const backendRuntime = config.get("backendRuntime") ?? "cr"; // "cr" | "gke"
 // GCE VM resources below are preserved — set useNeon: false to revert.
 const useNeon = config.getBoolean("useNeon") ?? false;
 const neonDatabaseUrl = useNeon ? config.requireSecret("neonDatabaseUrl") : undefined;
+const typesenseEnabled = config.get("typesenseEnabled") ?? "false";
+const typesenseUrl     = config.get("typesenseUrl")     ?? "";
+const typesenseApiKey  = config.get("typesenseApiKey")  ?? "";
 
 // ── APIs ──────────────────────────────────────────────────────────────────────
 const apis = [
@@ -198,6 +201,9 @@ if (backendRuntime !== "gke") {
             },
           },
           { name: "SPRING_FLYWAY_SCHEMAS", value: "public" },
+          { name: "TYPESENSE_ENABLED",  value: typesenseEnabled },
+          { name: "TYPESENSE_URL",      value: typesenseUrl },
+          { name: "TYPESENSE_API_KEY",  value: typesenseApiKey },
         ],
         startupProbe: {
           tcpSocket: { port: 8080 },

@@ -36,6 +36,7 @@ public class OrderService {
     private final RegionRepository regionRepository;
     private final ProductRepository productRepository;
     private final AggregatesCache aggregatesCache;
+    private final TypesenseService typesenseService;
 
     public OrderListResult listOrders(
             String q, int page, int pageSize, String sort, String dir,
@@ -48,6 +49,15 @@ public class OrderService {
 
         String safeSort = Set.of("placedAt", "total", "status", "customer", "id").contains(sort) ? sort : "placedAt";
         String safeDir = "asc".equalsIgnoreCase(dir) ? "ASC" : "DESC";
+
+        if (typesenseService.isEnabled() && q != null && !q.isBlank()) {
+            TypesenseService.SearchResult ts = typesenseService.search(q, page, pageSize);
+            if (ts != null) {
+                return listOrdersFromTypesense(ts, page, pageSize, safeSort, safeDir,
+                        status, regionCode, from, to, minTotal, maxTotal);
+            }
+            // Typesense failed — fall through to Postgres
+        }
 
         var params = new MapSqlParameterSource();
         String ctePrefix = buildSearchCte(q, params);
@@ -383,6 +393,47 @@ public class OrderService {
 
     // --- helpers ---
 
+    private OrderListResult listOrdersFromTypesense(
+            TypesenseService.SearchResult ts,
+            int page, int pageSize, String safeSort, String safeDir,
+            String status, String regionCode, String from, String to,
+            BigDecimal minTotal, BigDecimal maxTotal) {
+
+        if (ts.ids().isEmpty()) {
+            return new OrderListResult(List.of(), page, pageSize, 0, 0, false);
+        }
+        long total = ts.total();
+        int totalPages = (int) Math.ceil((double) total / pageSize);
+
+        String orderBy = switch (safeSort) {
+            case "customer" -> "c.\"firstName\" " + safeDir + ", c.\"lastName\" " + safeDir + ", o.\"placedAt\" DESC";
+            case "total"    -> "o.total " + safeDir + ", o.\"placedAt\" DESC";
+            case "status"   -> "o.status " + safeDir + ", o.\"placedAt\" DESC";
+            case "id"       -> "o.id " + safeDir;
+            default         -> "o.\"placedAt\" " + safeDir;
+        };
+
+        var params = new MapSqlParameterSource();
+        // Non-text filters still applied in Postgres on the Typesense-returned IDs
+        var nonTextWhere = buildWhere(null, status, regionCode, from, to, minTotal, maxTotal, params);
+        params.addValue("tsIds", ts.ids().toArray(new Integer[0]));
+        String where = nonTextWhere.isEmpty()
+                ? "WHERE o.id = ANY(:tsIds)"
+                : nonTextWhere + " AND o.id = ANY(:tsIds)";
+
+        String dataSql = """
+                SELECT o.id, o.status, o.total, o.currency, o.notes, o."placedAt",
+                       c.id AS c_id, c.email, c."firstName", c."lastName", c.phone,
+                       r.id AS r_id, r.code AS r_code, r.name AS r_name
+                FROM orders o
+                JOIN customers c ON c.id = o."customerId"
+                JOIN regions r ON r.id = o."regionId"
+                """ + where + " ORDER BY " + orderBy;
+
+        List<Map<String, Object>> rows = jdbc.queryForList(dataSql, params);
+        return toResult(rows, page, pageSize, total, totalPages, false);
+    }
+
     private String buildSearchCte(String q, MapSqlParameterSource params) {
         return ""; // search_text column handles all search — no CTE needed
     }
@@ -446,14 +497,14 @@ public class OrderService {
         Map<Integer, List<OrderItemDTO>> result = new HashMap<>();
         for (var row : rows) {
             int orderId = ((Number) row.get("orderId")).intValue();
+            int pid = ((Number) row.get("productId")).intValue();
             result.computeIfAbsent(orderId, k -> new ArrayList<>()).add(new OrderItemDTO(
                     ((Number) row.get("id")).intValue(),
-                    ((Number) row.get("productId")).intValue(),
-                    (String) row.get("sku"),
-                    (String) row.get("p_name"),
+                    pid,
                     ((Number) row.get("quantity")).intValue(),
                     (BigDecimal) row.get("unitPrice"),
-                    (BigDecimal) row.get("discount")));
+                    (BigDecimal) row.get("discount"),
+                    new OrderItemDTO.ProductSummaryDTO(pid, (String) row.get("sku"), (String) row.get("p_name"))));
         }
         return result;
     }

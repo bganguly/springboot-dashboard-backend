@@ -38,3 +38,8 @@ info:
 logging:
   level:
     com.dashboard: INFO
+
+typesense:
+  enabled: ${TYPESENSE_ENABLED:false}
+  url: ${TYPESENSE_URL:}
+  api-key: ${TYPESENSE_API_KEY:}
