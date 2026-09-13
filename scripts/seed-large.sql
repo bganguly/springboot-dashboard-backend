@@ -1,6 +1,6 @@
 -- Efficient bulk seed via generate_series (loads millions of rows in minutes).
--- Usage: psql "$DATABASE_URL" -v orders=4000000 -v first_names_file=scripts/data/first_names.txt -v last_names_file=scripts/data/last_names.txt -f scripts/seed-large.sql
--- `orders`, `first_names_file`, and `last_names_file` MUST be passed with -v.
+-- Usage: psql "$DATABASE_URL" -v orders=4000000 -v first_names_file=scripts/data/first_names.txt -v last_names_file=scripts/data/last_names.txt -v notes_file=scripts/data/notes.txt -f scripts/seed-large.sql
+-- `orders`, `first_names_file`, `last_names_file`, and `notes_file` MUST be passed with -v.
 \set ON_ERROR_STOP on
 \set customers 200000
 \set products 5000
@@ -11,12 +11,15 @@
 \set summary_cats 200
 \set summary_regions 50
 
--- Load 3186 first names and 473 last names (same pool as clickhouse-dashboard)
+-- Load 3186 first names, 473 last names, and 20 notes (same pool as clickhouse-dashboard)
 CREATE TEMP TABLE _first_names (id serial, name text);
 \copy _first_names (name) FROM :'first_names_file'
 
 CREATE TEMP TABLE _last_names (id serial, name text);
 \copy _last_names (name) FROM :'last_names_file'
+
+CREATE TEMP TABLE _notes (id serial, note text);
+\copy _notes (note) FROM :'notes_file'
 
 \echo Truncating existing data...
 TRUNCATE order_items, orders, daily_summary, products, customers, categories, regions RESTART IDENTITY CASCADE;
@@ -76,7 +79,7 @@ BEGIN
            (ARRAY['PENDING','CONFIRMED','PROCESSING','SHIPPED','DELIVERED','CANCELLED','REFUNDED'])[1 + floor(random() * 7)]::"OrderStatus",
            round((random() * 500 + 10)::numeric, 2),
            'USD',
-           'order ' || g,
+           (SELECT note FROM _notes WHERE id = 1 + ((g - 1) % 20)),
            now() - (random() * 730) * interval '1 day',
            now()
     FROM generate_series(start_id, end_id) g;

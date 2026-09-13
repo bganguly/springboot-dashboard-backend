@@ -293,7 +293,7 @@ _local_ensure_db() {
     psql -d "$db" -f "src/main/resources/db/migration/${v}.sql"
   done
   printf '[3/4] seeding %s orders...\n' "$orders"
-  psql -d "$db" -v orders="$orders" -f scripts/seed-large.sql
+  psql -d "$db" -v orders="$orders" -v first_names_file=scripts/data/first_names.txt -v last_names_file=scripts/data/last_names.txt -v notes_file=scripts/data/notes.txt -f scripts/seed-large.sql
   printf '[4/4] rebuilding read model rollups...\n'
   psql -d "$db" -f scripts/rebuild-dashboard-read-models.sql
   printf '\nSetup complete.\n'
@@ -1290,6 +1290,7 @@ PYEOF
   sed \
     -e "s|:'first_names_file'|'${script_dir}/data/first_names.txt'|g" \
     -e "s|:'last_names_file'|'${script_dir}/data/last_names.txt'|g" \
+    -e "s|:'notes_file'|'${script_dir}/data/notes.txt'|g" \
     "${script_dir}/seed-large.sql" > "$seed_sql"
   psql "$direct_url" \
     -v "orders=${orders}" \
