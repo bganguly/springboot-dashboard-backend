@@ -1910,7 +1910,6 @@ _check_gcloud
 _resolve_gcp_config
 _preflight_db
 _resolve_image
-_check_adc
 
 if [[ "$_IMG_EXISTED" == "1" && "$BACKEND_RUNTIME" == "cr" && "$USE_NEON" == "true" ]]; then
   DEPLOY_MODE_PREFIX=$([[ "$DEPLOY_MODE" == "lite" ]] && printf 'dash-lite' || printf 'dash-full')
@@ -1941,6 +1940,7 @@ if [[ "$_IMG_EXISTED" == "1" && "$BACKEND_RUNTIME" == "cr" && "$USE_NEON" == "tr
   fi
 fi
 
+_check_adc
 _deploy_pulumi
 _setup_db_post_pulumi
 

@@ -172,13 +172,13 @@ deploy.sh (auto) or scripts/bake-demo-snapshot.sh
 | **Check GCP access** | Verifies `gcloud` CLI; checks active account — installs or authorises if missing |
 | **Resolve project & region** | Reads `gcloud config` for project ID and region |
 | **Build backend image (if needed)** | Hashes `src/` + `Dockerfile` + `build.gradle.kts` → 16-char tag; skips Cloud Build if already in Artifact Registry, otherwise submits build (Spring Boot compiled + containerised) |
-| **Check ADC** | App-default credentials used by Pulumi to call GCP APIs — runs `gcloud auth application-default login` if missing |
 
 **If backend is already live (image + Cloud Run + DB unchanged):**
 - Seeds Typesense — if opted in; prompts to override URL/keys
 - Redeploys frontend — if asked
 
 **Full deploy (otherwise):**
+- Check ADC — app-default credentials used by Pulumi; runs `gcloud auth application-default login` if missing
 - `pulumi up` — deploys the backend image to Cloud Run, provisions networking + IAM; runs DB migrations; seeds & syncs order data
 - Seeds Typesense — if opted in; prompts to override URL/keys
 - Redeploys frontend — if asked
