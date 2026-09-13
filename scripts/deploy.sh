@@ -228,6 +228,21 @@ _prompt_typesense() {
       [Nn]*) USE_TYPESENSE="false"; return 0 ;;
       *)     USE_TYPESENSE="true"  ;;
     esac
+    printf '  Override URL/key? [y/N]: '
+    read -r _TS_OVERRIDE
+    case "${_TS_OVERRIDE:-N}" in
+      [Yy]*)
+        printf '  Typesense URL:\n  > '
+        read -r TYPESENSE_URL
+        [[ -n "$TYPESENSE_URL" ]] || { printf 'Typesense URL is required.\n'; exit 1; }
+        printf '  Typesense API key:\n  > '
+        read -rs TYPESENSE_API_KEY; printf '\n'
+        [[ -n "$TYPESENSE_API_KEY" ]] || { printf 'Typesense API key is required.\n'; exit 1; }
+        printf 'TYPESENSE_URL=%s\nTYPESENSE_API_KEY=%s\n' "$TYPESENSE_URL" "$TYPESENSE_API_KEY" > "$TS_CREDS_FILE"
+        chmod 600 "$TS_CREDS_FILE"
+        printf '  Saved to .typesense-creds\n'
+        ;;
+    esac
     return 0
   fi
 
