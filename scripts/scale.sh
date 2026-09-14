@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TIER="${TIER:-lite}"
+TIER="${TIER:-full}"
 PROJECT="bikram-java"
 LOCATION="us-central1"
 ZONE="${LOCATION}-a"
