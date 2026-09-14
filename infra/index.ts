@@ -218,7 +218,7 @@ if (backendRuntime !== "gke") {
         },
       }],
       scaling: {
-        minInstanceCount: 0,
+        minInstanceCount: 1,
         maxInstanceCount: 5,
       },
       ...(useNeon ? {} : {
