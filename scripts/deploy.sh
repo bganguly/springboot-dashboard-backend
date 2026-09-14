@@ -208,7 +208,9 @@ _prompt_typesense() {
     read -r _TS_RECHECK
     case "${_TS_RECHECK:-N}" in
       [Yy]*) saved_enabled="" ;;
-      *)     USE_TYPESENSE="false"; return 0 ;;
+      *)     USE_TYPESENSE="false"
+             printf '# Typesense disabled: collection/URL may have been deleted — re-create before re-enabling\n' > "${TS_CREDS_FILE}.disabled"
+             return 0 ;;
     esac
   fi
 
@@ -226,8 +228,12 @@ _prompt_typesense() {
     printf '  Use Typesense for search? [Y/n]: '
     read -r _TS
     case "${_TS:-Y}" in
-      [Nn]*) USE_TYPESENSE="false"; return 0 ;;
-      *)     USE_TYPESENSE="true"  ;;
+      [Nn]*) USE_TYPESENSE="false"
+             printf '# Typesense disabled: collection/URL may have been deleted — re-create before re-enabling\n' > "${TS_CREDS_FILE}.disabled"
+             return 0 ;;
+      *)     USE_TYPESENSE="true"
+             rm -f "${TS_CREDS_FILE}.disabled"
+             ;;
     esac
     printf '  Override URL/key? [y/N]: '
     read -r _TS_OVERRIDE
@@ -257,8 +263,12 @@ _prompt_typesense() {
   printf '\nUse Typesense? [y/N]: '
   read -r _TS
   case "${_TS:-N}" in
-    [Yy]*) USE_TYPESENSE="true" ;;
-    *)     USE_TYPESENSE="false"; return 0 ;;
+    [Yy]*) USE_TYPESENSE="true"
+           rm -f "${TS_CREDS_FILE}.disabled"
+           ;;
+    *)     USE_TYPESENSE="false"
+           printf '# Typesense disabled: collection/URL may have been deleted — re-create before re-enabling\n' > "${TS_CREDS_FILE}.disabled"
+           return 0 ;;
   esac
 
   printf '  Typesense URL (e.g. https://your-cluster.a1.typesense.net):\n  > '
