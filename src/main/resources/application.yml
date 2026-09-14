@@ -44,3 +44,7 @@ typesense:
   url: ${TYPESENSE_URL:}
   api-key: ${TYPESENSE_API_KEY:}
   search-key: ${TYPESENSE_SEARCH_KEY:}
+
+search:
+  fulltext:
+    enabled: ${FULLTEXT_SEARCH_ENABLED:false}

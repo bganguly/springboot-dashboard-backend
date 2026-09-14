@@ -22,6 +22,7 @@ const typesenseEnabled = config.get("typesenseEnabled") ?? "false";
 const typesenseUrl     = config.get("typesenseUrl")     ?? "";
 const typesenseApiKey    = typesenseEnabled === "true" ? config.requireSecret("typesenseApiKey")    : pulumi.output("");
 const typesenseSearchKey = typesenseEnabled === "true" ? config.requireSecret("typesenseSearchKey") : pulumi.output("");
+const fulltextEnabled  = config.get("fulltextEnabled")  ?? "false";
 
 // ── APIs ──────────────────────────────────────────────────────────────────────
 const apis = [
@@ -206,6 +207,7 @@ if (backendRuntime !== "gke") {
           { name: "TYPESENSE_URL",      value: typesenseUrl },
           { name: "TYPESENSE_API_KEY",    value: typesenseApiKey },
           { name: "TYPESENSE_SEARCH_KEY", value: typesenseSearchKey },
+          { name: "FULLTEXT_SEARCH_ENABLED", value: fulltextEnabled },
         ],
         startupProbe: {
           tcpSocket: { port: 8080 },

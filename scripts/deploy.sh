@@ -40,6 +40,7 @@ USE_TYPESENSE="false"
 TYPESENSE_URL=""
 TYPESENSE_API_KEY=""
 TYPESENSE_SEARCH_KEY=""
+USE_FULLTEXT="false"
 
 # ── Utility ───────────────────────────────────────────────────────────────────
 
@@ -289,6 +290,44 @@ _prompt_typesense() {
   printf '  Saved to .typesense-creds\n'
 }
 
+_prompt_fulltext() {
+  local env_file
+  if [[ "$_TARGET" == "remote" ]]; then
+    env_file="$ROOT_DIR/.env.gcp.${DEPLOY_MODE}"
+  else
+    env_file="$ROOT_DIR/.env.local"
+  fi
+
+  local saved=""
+  if [[ -f "$env_file" ]]; then
+    saved=$(grep -E '^USE_FULLTEXT=' "$env_file" | cut -d= -f2- | tr -d '"' || true)
+  fi
+
+  if [[ -n "$saved" ]]; then
+    if [[ "$saved" == "true" ]]; then
+      printf '\n  Search: Postgres full-text (saved). Keep? [Y/n]: '
+    else
+      printf '\n  Search: Postgres ILIKE (saved). Enable full-text search? [y/N]: '
+    fi
+    read -r _FT_RECHECK
+    case "${_FT_RECHECK:-}" in
+      [Yy]*) USE_FULLTEXT="true"; return 0 ;;
+      [Nn]*) USE_FULLTEXT="false"; return 0 ;;
+      *)     USE_FULLTEXT="$saved"; return 0 ;;
+    esac
+  fi
+
+  printf '\n  Postgres search mode:\n'
+  printf '  [Y] Full-text search (tsvector/GIN — whole-word, ranking-ready, websearch syntax)\n'
+  printf '  [N] ILIKE trigram (substring match, current default)\n'
+  printf '\nEnable Postgres full-text search? [y/N]: '
+  read -r _FT
+  case "${_FT:-N}" in
+    [Yy]*) USE_FULLTEXT="true" ;;
+    *)     USE_FULLTEXT="false" ;;
+  esac
+}
+
 _print_cost_summary() {
   [[ "$_TARGET" != "remote" ]] && return 0
   if [[ "$DEPLOY_MODE" == "lite" ]]; then
@@ -458,6 +497,7 @@ _local_start_backend() {
     TYPESENSE_URL="${TYPESENSE_URL}" \
     TYPESENSE_API_KEY="${TYPESENSE_API_KEY}" \
     TYPESENSE_SEARCH_KEY="${TYPESENSE_SEARCH_KEY:-${TYPESENSE_API_KEY}}" \
+    FULLTEXT_SEARCH_ENABLED="${USE_FULLTEXT}" \
     ./gradlew bootRun > "$log" 2>&1 &
   BACKEND_PID=$!
   printf '  PID %s — log: %s\n' "$BACKEND_PID" "$log"
@@ -809,6 +849,7 @@ config:
   dashboard:useNeon: ${USE_NEON}
   dashboard:typesenseEnabled: ${USE_TYPESENSE}
   dashboard:typesenseUrl: ${TYPESENSE_URL}
+  dashboard:fulltextEnabled: ${USE_FULLTEXT}
 PYAML
   else
     cat > "Pulumi.${DEPLOY_MODE}.yaml" <<PYAML
@@ -823,6 +864,7 @@ config:
   dashboard:useNeon: ${USE_NEON}
   dashboard:typesenseEnabled: ${USE_TYPESENSE}
   dashboard:typesenseUrl: ${TYPESENSE_URL}
+  dashboard:fulltextEnabled: ${USE_FULLTEXT}
 PYAML
   fi
 }
@@ -1727,6 +1769,7 @@ GCP_REGION=${existing_gcp_region:-${GCP_REGION}}
 USE_NEON=${USE_NEON}
 NEON_DATABASE_URL=${NEON_DATABASE_URL}
 USE_TYPESENSE=${USE_TYPESENSE}
+USE_FULLTEXT=${USE_FULLTEXT}
 EOF
 }
 
@@ -1741,6 +1784,7 @@ GCP_REGION=${GCP_REGION}
 USE_NEON=${USE_NEON}
 NEON_DATABASE_URL=${NEON_DATABASE_URL}
 USE_TYPESENSE=${USE_TYPESENSE}
+USE_FULLTEXT=${USE_FULLTEXT}
 EOF
 }
 
@@ -1913,6 +1957,7 @@ _prompt_menu
 _prompt_backend_runtime
 _prompt_database_backend
 _prompt_typesense
+_prompt_fulltext
 _save_user_inputs
 _print_cost_summary
 

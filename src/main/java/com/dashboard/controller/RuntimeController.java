@@ -15,6 +15,9 @@ public class RuntimeController {
     @Value("${BACKEND_RUNTIME:cr}")
     private String runtime;
 
+    @Value("${search.fulltext.enabled:false}")
+    private boolean fulltextEnabled;
+
     private final TypesenseService typesenseService;
 
     public RuntimeController(TypesenseService typesenseService) {
@@ -28,9 +31,14 @@ public class RuntimeController {
 
     @GetMapping("/status")
     public Map<String, Object> status() {
+        boolean ts = typesenseService.isAvailable();
+        String searchMode = ts ? "typesense"
+                : fulltextEnabled ? "postgres-fts"
+                : "postgres-ilike";
         return Map.of(
             "runtime", runtime,
-            "typesense", typesenseService.isAvailable()
+            "typesense", ts,
+            "searchMode", searchMode
         );
     }
 }

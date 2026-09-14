@@ -4,6 +4,7 @@ import com.dashboard.dto.*;
 import com.dashboard.entity.*;
 import com.dashboard.repository.*;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -37,6 +38,9 @@ public class OrderService {
     private final ProductRepository productRepository;
     private final AggregatesCache aggregatesCache;
     private final TypesenseService typesenseService;
+
+    @Value("${search.fulltext.enabled:false}")
+    private boolean fulltextEnabled;
 
     public OrderListResult listOrders(
             String q, int page, int pageSize, String sort, String dir,
@@ -440,11 +444,16 @@ public class OrderService {
         List<String> clauses = new ArrayList<>();
 
         if (q != null && !q.isBlank()) {
-            String[] tokens = q.strip().split("\\s+");
-            for (int i = 0; i < tokens.length; i++) {
-                String key = "q" + i;
-                clauses.add("o.search_text ILIKE :" + key);
-                params.addValue(key, "%" + tokens[i] + "%");
+            if (fulltextEnabled) {
+                clauses.add("o.search_tsv @@ websearch_to_tsquery('simple', :q)");
+                params.addValue("q", q.strip());
+            } else {
+                String[] tokens = q.strip().split("\\s+");
+                for (int i = 0; i < tokens.length; i++) {
+                    String key = "q" + i;
+                    clauses.add("o.search_text ILIKE :" + key);
+                    params.addValue(key, "%" + tokens[i] + "%");
+                }
             }
         }
         if (status != null && !status.isBlank()) {
