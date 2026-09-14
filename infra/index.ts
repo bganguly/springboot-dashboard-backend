@@ -241,53 +241,6 @@ if (backendRuntime !== "gke") {
     member: "allUsers",
   });
 
-  // ── Scheduled min-instance scaling (8am–5pm America/Los_Angeles) ─────────────
-  // Keeps one warm instance during demo hours so there's no cold-start latency.
-  // Outside those hours min=0 so the service scales to zero and costs ~nothing.
-  const schedulerSa = new gcp.serviceaccount.Account("scheduler-sa", {
-    accountId: `${namePrefix}-sched-sa`,
-    displayName: "Cloud Run min-instance scheduler",
-  });
-
-  new gcp.projects.IAMMember("scheduler-run-developer", {
-    project,
-    role: "roles/run.developer",
-    member: pulumi.interpolate`serviceAccount:${schedulerSa.email}`,
-  });
-
-  const _svcPath = pulumi.interpolate`projects/${project}/locations/${region}/services/${backendService.name}`;
-  const _patchUri = pulumi.interpolate`https://run.googleapis.com/v2/${_svcPath}?updateMask=template.scaling.minInstanceCount`;
-  const _scaleUp   = Buffer.from(JSON.stringify({ template: { scaling: { minInstanceCount: 1 } } })).toString("base64");
-  const _scaleDown = Buffer.from(JSON.stringify({ template: { scaling: { minInstanceCount: 0 } } })).toString("base64");
-
-  new gcp.cloudscheduler.Job("scale-up-backend", {
-    name: `${namePrefix}-scale-up-backend`,
-    region,
-    schedule: "0 8 * * 1-5",
-    timeZone: "America/Los_Angeles",
-    httpTarget: {
-      uri: _patchUri,
-      httpMethod: "PATCH",
-      body: _scaleUp,
-      headers: { "Content-Type": "application/json" },
-      oidcToken: { serviceAccountEmail: schedulerSa.email, audience: "https://run.googleapis.com/" },
-    },
-  }, { dependsOn: apis });
-
-  new gcp.cloudscheduler.Job("scale-down-backend", {
-    name: `${namePrefix}-scale-down-backend`,
-    region,
-    schedule: "0 17 * * 1-5",
-    timeZone: "America/Los_Angeles",
-    httpTarget: {
-      uri: _patchUri,
-      httpMethod: "PATCH",
-      body: _scaleDown,
-      headers: { "Content-Type": "application/json" },
-      oidcToken: { serviceAccountEmail: schedulerSa.email, audience: "https://run.googleapis.com/" },
-    },
-  }, { dependsOn: apis });
-
   _backendUrl = backendService.uri;
 }
 
