@@ -221,6 +221,7 @@ if (backendRuntime !== "gke") {
         minInstanceCount: 0,
         maxInstanceCount: 5,
       },
+      cpuThrottling: true,
       ...(useNeon ? {} : {
         vpcAccess: {
           networkInterfaces: [{
