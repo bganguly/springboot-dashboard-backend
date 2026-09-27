@@ -191,6 +191,8 @@ if (backendRuntime !== "gke") {
         ports: [{ containerPort: 8080 }],
         resources: {
           limits: { cpu: "1", memory: "512Mi" },
+          cpuIdle: true,
+          startupCpuBoost: true,
         },
         envs: [
           {
