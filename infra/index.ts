@@ -192,6 +192,7 @@ if (backendRuntime !== "gke") {
         resources: {
           limits: { cpu: "1", memory: "512Mi" },
           cpuIdle: true,
+          startupCpuBoost: true,
         },
         envs: [
           {
