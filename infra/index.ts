@@ -191,6 +191,7 @@ if (backendRuntime !== "gke") {
         ports: [{ containerPort: 8080 }],
         resources: {
           limits: { cpu: "1", memory: "512Mi" },
+          cpuIdle: true,
         },
         envs: [
           {
@@ -221,7 +222,6 @@ if (backendRuntime !== "gke") {
         minInstanceCount: 0,
         maxInstanceCount: 5,
       },
-      cpuThrottling: true,
       ...(useNeon ? {} : {
         vpcAccess: {
           networkInterfaces: [{
