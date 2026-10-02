@@ -1925,8 +1925,10 @@ _post_deploy_checks() {
     && _chk 7 "Database has data" 1 "${_DB_ORDERS} orders" \
     || _chk 7 "Database has data" 0 "0 orders — seed may have failed"
 
+  local _FE_SVC
+  _FE_SVC=$([[ "$DEPLOY_MODE" == "lite" ]] && printf 'dash-react-lite-frontend' || printf 'dash-react-frontend')
   local fe_url
-  fe_url=$(gcloud run services describe "${DEPLOY_MODE_PREFIX}-frontend" \
+  fe_url=$(gcloud run services describe "$_FE_SVC" \
     --region "$GCP_REGION" --project "$GCP_PROJECT" \
     --format="value(status.url)" 2>/dev/null || true)
   if [[ -n "$fe_url" ]]; then
@@ -1943,9 +1945,11 @@ _post_deploy_checks() {
   fi
 
   printf '\n  Results: %d passed, %d failed\n' "$_CP" "$_CF"
-  (( _CF > 0 )) && printf '\n  !! %d CHECK(S) FAILED — review above before presenting\n' "$_CF"
-  [[ "$DEPLOY_MODE" == "full" && "$USE_NEON" != "true" ]] && \
+  if (( _CF > 0 )); then printf '\n  !! %d CHECK(S) FAILED — review above before presenting\n' "$_CF"; fi
+  if [[ "$DEPLOY_MODE" == "full" && "$USE_NEON" != "true" ]]; then
     printf '\n  !! REMINDER: FULL MODE WITH GCE VM (~$52/mo+) — run infra-down.sh when done\n'
+  fi
+  return 0
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2025,6 +2029,7 @@ printf '\nBackend URL: %s\n' "$BACKEND_URL"
 
 _update_readme
 _deploy_frontend_inline
+_STEP="post-deploy"
 
 printf '\nRemember to tear down when finished:\n  ./scripts/infra-down.sh\n'
 
