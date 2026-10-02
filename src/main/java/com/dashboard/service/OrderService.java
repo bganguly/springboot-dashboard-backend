@@ -473,10 +473,11 @@ public class OrderService {
             result.computeIfAbsent(orderId, k -> new ArrayList<>()).add(new OrderItemDTO(
                     ((Number) row.get("id")).intValue(),
                     pid,
+                    (String) row.get("sku"),
+                    (String) row.get("p_name"),
                     ((Number) row.get("quantity")).intValue(),
                     (BigDecimal) row.get("unitPrice"),
-                    (BigDecimal) row.get("discount"),
-                    new OrderItemDTO.ProductSummaryDTO(pid, (String) row.get("sku"), (String) row.get("p_name"))));
+                    (BigDecimal) row.get("discount")));
         }
         return result;
     }
