@@ -9,8 +9,6 @@ import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -36,7 +34,6 @@ public class OrderService {
     private final CustomerRepository customerRepository;
     private final RegionRepository regionRepository;
     private final ProductRepository productRepository;
-    private final AggregatesCache aggregatesCache;
     private final TypesenseService typesenseService;
 
     @Value("${search.fulltext.enabled:false}")
@@ -243,9 +240,6 @@ public class OrderService {
     public long exactCount(String q, String status, String regionCode,
                             String from, String to,
                             BigDecimal minTotal, BigDecimal maxTotal) {
-        Long rollup = tryDailyOrderCountRollup(q, status, regionCode, from, to, minTotal, maxTotal);
-        if (rollup != null) return rollup;
-
         var params = new MapSqlParameterSource();
         var where = buildWhere(q, status, regionCode, from, to, minTotal, maxTotal, params);
         boolean needsRegionJoin = regionCode != null && !regionCode.isBlank();
@@ -288,9 +282,6 @@ public class OrderService {
     public long exactCountUncapped(String q, String status, String regionCode,
                                     String from, String to,
                                     BigDecimal minTotal, BigDecimal maxTotal) {
-        Long rollup = tryDailyOrderCountRollup(q, status, regionCode, from, to, minTotal, maxTotal);
-        if (rollup != null) return rollup;
-
         var params = new MapSqlParameterSource();
         var where = buildWhere(q, status, regionCode, from, to, minTotal, maxTotal, params);
         boolean needsRegionJoin = regionCode != null && !regionCode.isBlank();
@@ -298,23 +289,6 @@ public class OrderService {
         String countSql = "SELECT COUNT(*) FROM orders o " + regionJoin + where;
         String cacheKey = buildCountCacheKey(q, status, regionCode, from, to, minTotal, maxTotal);
         return cachedCount(countSql, params, cacheKey);
-    }
-
-    private Long tryDailyOrderCountRollup(String q, String status, String regionCode,
-                                          String from, String to,
-                                          BigDecimal minTotal, BigDecimal maxTotal) {
-        boolean pureDateRange = (q == null || q.isBlank())
-                && (status == null || status.isBlank())
-                && (regionCode == null || regionCode.isBlank())
-                && minTotal == null && maxTotal == null;
-        if (!pureDateRange) return null;
-        if (from == null || from.isBlank() || to == null || to.isBlank()) return null;
-
-        var params = new MapSqlParameterSource().addValue("from", from).addValue("to", to);
-        Long sum = jdbc.queryForObject(
-                "SELECT COALESCE(SUM(\"totalOrders\"), 0) FROM daily_order_count " +
-                "WHERE date BETWEEN :from::date AND :to::date", params, Long.class);
-        return sum != null ? sum : 0L;
     }
 
     @Transactional
@@ -382,12 +356,6 @@ public class OrderService {
                     "OR (:searchText IS NOT NULL AND :searchText ILIKE '%' || substring(cache_key from 'q=([^&]*)') || '%')",
                     new MapSqlParameterSource("searchText", searchText));
         } catch (Exception ignored) {}
-
-        // Evict the in-process aggregates cache after commit so the next
-        // chart request recomputes with the new order included.
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override public void afterCommit() { aggregatesCache.invalidateAll(); }
-        });
 
         return Map.of(
                 "id", saved.getId(),

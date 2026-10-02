@@ -1,7 +1,6 @@
 package com.dashboard.controller;
 
 import com.dashboard.service.AggregateService;
-import com.dashboard.service.AggregatesCache;
 import com.dashboard.service.OrderService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -10,7 +9,6 @@ import org.springframework.web.bind.annotation.*;
 import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
@@ -20,7 +18,6 @@ import java.util.concurrent.Executor;
 public class AggregateController {
 
     private final AggregateService aggregateService;
-    private final AggregatesCache aggregatesCache;
     private final Executor virtualThreadExecutor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
 
     @GetMapping
@@ -33,33 +30,14 @@ public class AggregateController {
             @RequestParam(required = false) BigDecimal minTotal,
             @RequestParam(required = false) BigDecimal maxTotal,
             @RequestParam(required = false) Integer topCategories,
-            // The category breakdown (pre-aggregated, always fast) and the
-            // exact total (a raw COUNT(*) — cheap only when count_cache
-            // already has this exact range cached, which a brush drag's
-            // ever-changing range essentially never does) are independent.
-            // Callers that don't want to block a fast render on a slow count
-            // — or vice versa — can request just one side.
             @RequestParam(defaultValue = "true") boolean includeData,
             @RequestParam(defaultValue = "true") boolean includeTotal) {
-        boolean noFilters = (q == null || q.isBlank()) && status == null && regionCode == null
-                && minTotal == null && maxTotal == null;
-        int effectiveTopN = topCategories != null ? topCategories : 5;
-        String cacheKey = (noFilters && includeData && includeTotal)
-                ? AggregatesCache.key(from, to, effectiveTopN) : null;
-        if (cacheKey != null) {
-            Optional<Map<String, Object>> hit = aggregatesCache.get(cacheKey);
-            if (hit.isPresent()) return ResponseEntity.ok(hit.get());
-        }
 
         CompletableFuture<?> dataFuture = includeData
                 ? CompletableFuture.supplyAsync(
                         () -> aggregateService.getDailyAggregates(from, to, q, status, regionCode, minTotal, maxTotal, topCategories),
                         virtualThreadExecutor)
                 : CompletableFuture.completedFuture(null);
-        // Exact distinct order count for this same range/filters — see
-        // AggregateService.getExactTotal. Preferred over summing category
-        // rows, which double-counts any order whose items span more than one
-        // category.
         CompletableFuture<?> totalFuture = includeTotal
                 ? CompletableFuture.supplyAsync(
                         () -> aggregateService.getExactTotal(from, to, q, status, regionCode, minTotal, maxTotal),
@@ -76,7 +54,6 @@ public class AggregateController {
             body.put("totalOrders", OrderService.adjustCount(raw));
             body.put("totalOrdersApproximate", OrderService.isApproximateCount(raw));
         }
-        if (cacheKey != null) aggregatesCache.put(cacheKey, body);
         return ResponseEntity.ok(body);
     }
 }
