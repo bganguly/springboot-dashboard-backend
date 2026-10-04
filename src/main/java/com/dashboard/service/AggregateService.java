@@ -53,13 +53,7 @@ public class AggregateService {
             rows = queryDailySummary(from, to, regionCode);
         } else if (hasQ && isMultiToken && !hasTotal) {
             rows = queryMultiTokenViaCte(from, to, q, status, regionCode);
-            if (rows.isEmpty()) rows = queryViaSearchText(from, to, q, status, regionCode, minTotal, maxTotal);
-        } else if (hasQ && isMultiToken) {
-            rows = queryViaSearchText(from, to, q, status, regionCode, minTotal, maxTotal);
-        } else if (hasQ && !hasStatus && !hasRegion && !hasTotal) {
-            rows = queryViaSearchText(from, to, q, null, null, null, null);
-        } else if (hasQ && !hasTotal) {
-            rows = queryViaSearchText(from, to, q, status, regionCode, null, null);
+            if (rows.isEmpty()) rows = queryViaSearchText(from, to, q, status, regionCode, null, null);
         } else if (hasQ) {
             rows = queryViaSearchText(from, to, q, status, regionCode, minTotal, maxTotal);
         } else if (hasStatus && !hasRegion && !hasTotal) {
@@ -85,37 +79,6 @@ public class AggregateService {
                 "SUM(\"totalOrders\") AS total_orders, SUM(\"totalRevenue\") AS total_revenue, " +
                 "SUM(\"totalItems\") AS total_items FROM daily_summary " + where +
                 " GROUP BY date, \"categoryName\" ORDER BY date", params);
-    }
-
-    private List<Map<String, Object>> queryTokenRollup(String from, String to, String q) {
-        String token = q.strip().toLowerCase();
-        var params = new MapSqlParameterSource()
-                .addValue("from", from).addValue("to", to).addValue("token", token);
-        return jdbc.queryForList(
-                "SELECT date::text AS day, \"categoryName\" AS category, " +
-                "SUM(\"totalOrders\") AS total_orders, SUM(\"totalRevenue\") AS total_revenue, " +
-                "SUM(\"totalItems\") AS total_items FROM daily_customer_token_category_rollup " +
-                "WHERE token = :token AND date BETWEEN :from::date AND :to::date " +
-                "GROUP BY date, \"categoryName\" ORDER BY date", params);
-    }
-
-    private List<Map<String, Object>> queryTokenCategorySummary(
-            String from, String to, String q, String status, String regionCode) {
-        String token = q.strip().toLowerCase();
-        var params = new MapSqlParameterSource()
-                .addValue("from", from).addValue("to", to).addValue("token", token);
-        List<String> extra = new ArrayList<>();
-        if (status != null && !status.isBlank())
-            extra.add("status = ANY(ARRAY[" + quoteStatusList(status) + "])");
-        if (regionCode != null && !regionCode.isBlank())
-            extra.add("\"regionCode\" = ANY(ARRAY[" + quoteList(regionCode) + "])");
-        String where = "WHERE token = :token AND date BETWEEN :from::date AND :to::date" +
-                (extra.isEmpty() ? "" : " AND " + String.join(" AND ", extra));
-        return jdbc.queryForList(
-                "SELECT date::text AS day, \"categoryName\" AS category, " +
-                "SUM(\"totalOrders\") AS total_orders, SUM(\"totalRevenue\") AS total_revenue, " +
-                "SUM(\"totalItems\") AS total_items FROM daily_customer_token_category_summary " +
-                where + " GROUP BY date, \"categoryName\" ORDER BY date", params);
     }
 
     private List<Map<String, Object>> queryStatusCategorySummary(String from, String to, String status) {
