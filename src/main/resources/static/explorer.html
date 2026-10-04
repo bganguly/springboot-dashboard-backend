@@ -188,7 +188,14 @@ td { padding: 0.5rem 0.75rem; color: #d4d4d8; border-bottom: 1px solid rgba(255,
       (function(){
         var ref = document.referrer;
         var base = ref ? new URL(ref).origin : 'https://bganguly.github.io';
-        document.getElementById('back-link').href = base + '/#dashboard';
+        var link = document.getElementById('back-link');
+        link.href = base + '/#dashboard';
+        link.addEventListener('click', function(e) {
+          e.preventDefault();
+          var url = link.href;
+          try { if (window.opener && !window.opener.closed) { window.opener.location.href = url; window.close(); return; } } catch(_) {}
+          window.location.href = url;
+        });
       })();
     </script>
     <div class="nav-right">
