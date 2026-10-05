@@ -1952,6 +1952,63 @@ _post_deploy_checks() {
   return 0
 }
 
+# ── Neon storage warning ──────────────────────────────────────────────────────
+
+_warn_neon_storage() {
+  [[ "$USE_NEON" != "true" ]] && return 0
+  local size_mb
+  size_mb=$(psql "$NEON_DATABASE_URL" -t -c \
+    "SELECT round(pg_database_size(current_database()) / 1024.0 / 1024.0);" \
+    2>/dev/null | tr -d ' \n')
+  [[ "${size_mb:-0}" =~ ^[0-9]+$ ]] || size_mb=0
+  printf '\nNeon storage: ~%s MB / 512 MB free-tier cap\n' "$size_mb"
+  if [[ "${size_mb:-0}" -gt 400 ]]; then
+    printf 'WARNING: approaching 512 MB limit — consider one of:\n'
+    printf '  1. Truncate to ~250K orders:\n'
+    printf '       psql "$NEON_DATABASE_URL" -v orders=250000 -f scripts/seed-large.sql\n'
+    printf '  2. Tear down entirely:\n'
+    printf '       ./scripts/infra-down.sh\n'
+  fi
+}
+
+# ── Remote deploy ─────────────────────────────────────────────────────────────
+
+_deploy_remote() {
+  _check_adc
+  _deploy_pulumi
+  _setup_db_post_pulumi
+
+  _resolve_snapshot_vars
+  _check_db_row_count
+  _seed_db
+  [[ "$USE_NEON" == "true" ]] && _neon_premigrate_heavy
+  [[ "$USE_NEON" == "true" && "${_DB_ORDERS:-0}" -gt 0 ]] && _save_snapshot_to_gcs
+  _sync_daily_order_count
+  _seed_typesense
+
+  _scale_down_gke_if_switching
+
+  if [[ "$BACKEND_RUNTIME" == "gke" ]]; then
+    _deploy_gke
+  else
+    BACKEND_URL=$(cd "$ROOT_DIR/infra" && pulumi stack output backendUrl 2>/dev/null || true)
+  fi
+
+  _STEP="post-deploy"
+  _patch_frontend_backend_url
+  _save_env_file
+
+  printf '\nBackend URL: %s\n' "$BACKEND_URL"
+
+  _update_readme
+  _deploy_frontend_inline
+
+  printf '\nRemember to tear down when finished:\n  ./scripts/infra-down.sh\n'
+
+  _post_deploy_checks
+  _warn_neon_storage
+}
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Main
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2001,54 +2058,4 @@ if [[ "$_IMG_EXISTED" == "1" && "$BACKEND_RUNTIME" == "cr" && "$USE_NEON" == "tr
   fi
 fi
 
-_check_adc
-_deploy_pulumi
-_setup_db_post_pulumi
-
-_resolve_snapshot_vars
-_check_db_row_count
-_seed_db
-[[ "$USE_NEON" == "true" ]] && _neon_premigrate_heavy
-[[ "$USE_NEON" == "true" && "${_DB_ORDERS:-0}" -gt 0 ]] && _save_snapshot_to_gcs
-_sync_daily_order_count
-_seed_typesense
-
-_scale_down_gke_if_switching
-
-if [[ "$BACKEND_RUNTIME" == "gke" ]]; then
-  _deploy_gke
-else
-  BACKEND_URL=$(cd "$ROOT_DIR/infra" && pulumi stack output backendUrl 2>/dev/null || true)
-fi
-
-_STEP="post-deploy"
-_patch_frontend_backend_url
-_save_env_file
-
-printf '\nBackend URL: %s\n' "$BACKEND_URL"
-
-_update_readme
-_deploy_frontend_inline
-_STEP="post-deploy"
-
-printf '\nRemember to tear down when finished:\n  ./scripts/infra-down.sh\n'
-
-_post_deploy_checks
-
-_warn_neon_storage() {
-  [[ "$USE_NEON" != "true" ]] && return 0
-  local size_mb
-  size_mb=$(psql "$NEON_DATABASE_URL" -t -c \
-    "SELECT round(pg_database_size(current_database()) / 1024.0 / 1024.0);" \
-    2>/dev/null | tr -d ' \n')
-  [[ "${size_mb:-0}" =~ ^[0-9]+$ ]] || size_mb=0
-  printf '\nNeon storage: ~%s MB / 512 MB free-tier cap\n' "$size_mb"
-  if [[ "${size_mb:-0}" -gt 400 ]]; then
-    printf 'WARNING: approaching 512 MB limit — consider one of:\n'
-    printf '  1. Truncate to ~250K orders:\n'
-    printf '       psql "$NEON_DATABASE_URL" -v orders=250000 -f scripts/seed-large.sql\n'
-    printf '  2. Tear down entirely:\n'
-    printf '       ./scripts/infra-down.sh\n'
-  fi
-}
-_warn_neon_storage
+_deploy_remote

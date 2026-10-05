@@ -4,12 +4,12 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INFRA_DIR="$ROOT_DIR/infra"
 
-# ── Detect independent Pulumi stack state ────────────────────────────────────
+# ── Globals ───────────────────────────────────────────────────────────────────
 _local_running=0
 _lite_count=0
 _full_count=0
 
-lsof -ti:8080 >/dev/null 2>&1 && _local_running=1 || true
+# ── Utilities ─────────────────────────────────────────────────────────────────
 
 _pulumi_stack_count() {
   local stack="$1"
@@ -28,12 +28,106 @@ except Exception:
 " 2>/dev/null ) || printf '0'
 }
 
-if command -v pulumi >/dev/null 2>&1 && pulumi whoami >/dev/null 2>&1; then
-  _lite_count=$(_pulumi_stack_count lite)
-  _full_count=$(_pulumi_stack_count full)
-fi
+_pulumi_destroy_robust() {
+  local log_file
+  log_file="$(mktemp)"
+  local attempt=0 rc stale_urns
 
-# ── Show menu with detected state ────────────────────────────────────────────
+  while true; do
+    attempt=$(( attempt + 1 ))
+    set +e
+    pulumi destroy --yes 2>&1 | tee "$log_file"
+    rc="${PIPESTATUS[0]}"
+    set -e
+
+    if [[ "$rc" == "0" ]]; then
+      rm -f "$log_file"
+      return 0
+    fi
+
+    stale_urns=$(grep -oE 'error: deleting urn:pulumi:[^ ]+' "$log_file" \
+      | sed 's/^error: deleting //; s/:$//' | sort -u || true)
+
+    if [[ -z "$stale_urns" ]]; then
+      rm -f "$log_file"
+      printf '[infra-down] pulumi destroy failed with no extractable URNs — cannot auto-recover.\n' >&2
+      return 1
+    fi
+
+    printf '[infra-down] Auto-purging stale state entries (attempt %d)...\n' "$attempt"
+    while IFS= read -r urn; do
+      [[ -z "$urn" ]] && continue
+      printf '  purging: %s\n' "$urn"
+      pulumi state delete "$urn" --yes 2>/dev/null || true
+    done <<< "$stale_urns"
+  done
+}
+
+# ── Preflight ─────────────────────────────────────────────────────────────────
+
+_run_preflight() {
+  lsof -ti:8080 >/dev/null 2>&1 && _local_running=1 || true
+  if command -v pulumi >/dev/null 2>&1 && pulumi whoami >/dev/null 2>&1; then
+    _lite_count=$(_pulumi_stack_count lite)
+    _full_count=$(_pulumi_stack_count full)
+  fi
+}
+
+# ── Remote teardown ───────────────────────────────────────────────────────────
+
+_teardown_remote() {
+  local _GKE_PREFIX _GKE_CLUSTER _GKE_ZONE
+  _GKE_PREFIX=$([[ "$DEPLOY_MODE" == "lite" ]] && printf 'dash-lite' || printf 'dash-full')
+  _GKE_CLUSTER="${_GKE_PREFIX}-cluster"
+  _GKE_ZONE="${GCP_REGION}-a"
+
+  if gcloud container clusters describe "$_GKE_CLUSTER" \
+      --zone "$_GKE_ZONE" --project "$GCP_PROJECT" >/dev/null 2>&1; then
+    printf '[infra-down] Deleting GKE cluster %s (zero ongoing cost)...\n' "$_GKE_CLUSTER"
+    gcloud container clusters delete "$_GKE_CLUSTER" \
+      --zone "$_GKE_ZONE" --project "$GCP_PROJECT" --quiet
+    printf '[infra-down] GKE cluster deleted.\n'
+  fi
+
+  printf '[infra-down] Destroying Cloud Run, Postgres VM, VPC, Secret Manager, Artifact Registry...\n'
+
+  cd "$INFRA_DIR"
+  npm install --prefer-offline 2>/dev/null || npm install
+
+  pulumi stack select "$DEPLOY_MODE"
+  pulumi config set gcp:project "$GCP_PROJECT"
+  pulumi config set gcp:region  "$GCP_REGION"
+
+  local _EXPECTED_PREFIX _STACK_PREFIX
+  _EXPECTED_PREFIX=$([[ "$DEPLOY_MODE" == "lite" ]] && printf 'dash-lite' || printf 'dash')
+  _STACK_PREFIX=$(pulumi config get namePrefix 2>/dev/null || true)
+  if [[ -n "$_STACK_PREFIX" && "$_STACK_PREFIX" != "$_EXPECTED_PREFIX" ]]; then
+    printf '\n[infra-down] WARNING: %s stack has namePrefix=%s but expected %s.\n' "$DEPLOY_MODE" "$_STACK_PREFIX" "$_EXPECTED_PREFIX" >&2
+    printf '  This stack may contain resources from a different mode — destroying may affect other environments.\n' >&2
+    printf 'Proceed anyway? [y/N] '
+    read -r _SAFEGUARD
+    [[ "$_SAFEGUARD" =~ ^[Yy]$ ]] || { printf 'Aborted.\n'; exit 0; }
+  fi
+  printf '\n[infra-down] Targeting namePrefix=%s (only %s-* GCP resources will be deleted).\n' "$_EXPECTED_PREFIX" "$_EXPECTED_PREFIX"
+
+  _pulumi_destroy_robust
+
+  rm -f "$ENV_FILE"
+  printf '\n[infra-down] done — GCP %s resources destroyed, project %s preserved.\n' "$DEPLOY_MODE" "$GCP_PROJECT"
+  printf '[infra-down] NOTE: gs://bikram-java-dash-snapshots/ is intentionally preserved (not managed by Pulumi).\n'
+
+  local FRONTEND_DOWN
+  FRONTEND_DOWN="$(cd "$ROOT_DIR/../dashboard-frontend-gcp/scripts" 2>/dev/null && pwd || true)/infra-down.sh"
+  if [[ -f "$FRONTEND_DOWN" ]]; then
+    printf '\n  Chaining frontend (%s) teardown...\n' "$DEPLOY_MODE"
+    DEPLOY_MODE="$DEPLOY_MODE" bash "$FRONTEND_DOWN"
+  fi
+}
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+_run_preflight
+
 printf '\n=== springboot-dashboard-backend-gcp teardown ===\n\n'
 printf '  [1] Local  — stop local backend (port 8080)'
 (( _local_running )) && printf ' [running]' || printf ' [not detected]'
@@ -228,80 +322,4 @@ case "${_PRE_ACTION:-}" in
     ;;
 esac
 
-_GKE_PREFIX=$([[ "$DEPLOY_MODE" == "lite" ]] && printf 'dash-lite' || printf 'dash-full')
-_GKE_CLUSTER="${_GKE_PREFIX}-cluster"
-_GKE_ZONE="${GCP_REGION}-a"
-if gcloud container clusters describe "$_GKE_CLUSTER" \
-    --zone "$_GKE_ZONE" --project "$GCP_PROJECT" >/dev/null 2>&1; then
-  printf '[infra-down] Deleting GKE cluster %s (zero ongoing cost)...\n' "$_GKE_CLUSTER"
-  gcloud container clusters delete "$_GKE_CLUSTER" \
-    --zone "$_GKE_ZONE" --project "$GCP_PROJECT" --quiet
-  printf '[infra-down] GKE cluster deleted.\n'
-fi
-
-printf '[infra-down] Destroying Cloud Run, Postgres VM, VPC, Secret Manager, Artifact Registry...\n'
-
-cd "$INFRA_DIR"
-npm install --prefer-offline 2>/dev/null || npm install
-
-pulumi stack select "$DEPLOY_MODE"
-pulumi config set gcp:project "$GCP_PROJECT"
-pulumi config set gcp:region  "$GCP_REGION"
-
-_EXPECTED_PREFIX=$([[ "$DEPLOY_MODE" == "lite" ]] && printf 'dash-lite' || printf 'dash')
-_STACK_PREFIX=$(pulumi config get namePrefix 2>/dev/null || true)
-if [[ -n "$_STACK_PREFIX" && "$_STACK_PREFIX" != "$_EXPECTED_PREFIX" ]]; then
-  printf '\n[infra-down] WARNING: %s stack has namePrefix=%s but expected %s.\n' "$DEPLOY_MODE" "$_STACK_PREFIX" "$_EXPECTED_PREFIX" >&2
-  printf '  This stack may contain resources from a different mode — destroying may affect other environments.\n' >&2
-  printf 'Proceed anyway? [y/N] '
-  read -r _SAFEGUARD
-  [[ "$_SAFEGUARD" =~ ^[Yy]$ ]] || { printf 'Aborted.\n'; exit 0; }
-fi
-printf '\n[infra-down] Targeting namePrefix=%s (only %s-* GCP resources will be deleted).\n' "$_EXPECTED_PREFIX" "$_EXPECTED_PREFIX"
-
-_pulumi_destroy_robust() {
-  local log_file
-  log_file="$(mktemp)"
-  local attempt=0 rc stale_urns
-
-  while true; do
-    attempt=$(( attempt + 1 ))
-    set +e
-    pulumi destroy --yes 2>&1 | tee "$log_file"
-    rc="${PIPESTATUS[0]}"
-    set -e
-
-    if [[ "$rc" == "0" ]]; then
-      rm -f "$log_file"
-      return 0
-    fi
-
-    stale_urns=$(grep -oE 'error: deleting urn:pulumi:[^ ]+' "$log_file" \
-      | sed 's/^error: deleting //; s/:$//' | sort -u || true)
-
-    if [[ -z "$stale_urns" ]]; then
-      rm -f "$log_file"
-      printf '[infra-down] pulumi destroy failed with no extractable URNs — cannot auto-recover.\n' >&2
-      return 1
-    fi
-
-    printf '[infra-down] Auto-purging stale state entries (attempt %d)...\n' "$attempt"
-    while IFS= read -r urn; do
-      [[ -z "$urn" ]] && continue
-      printf '  purging: %s\n' "$urn"
-      pulumi state delete "$urn" --yes 2>/dev/null || true
-    done <<< "$stale_urns"
-  done
-}
-
-_pulumi_destroy_robust
-
-rm -f "$ENV_FILE"
-printf '\n[infra-down] done — GCP %s resources destroyed, project %s preserved.\n' "$DEPLOY_MODE" "$GCP_PROJECT"
-printf '[infra-down] NOTE: gs://bikram-java-dash-snapshots/ is intentionally preserved (not managed by Pulumi).\n'
-
-FRONTEND_DOWN="$(cd "$ROOT_DIR/../dashboard-frontend-gcp/scripts" 2>/dev/null && pwd || true)/infra-down.sh"
-if [[ -f "$FRONTEND_DOWN" ]]; then
-  printf '\n  Chaining frontend (%s) teardown...\n' "$DEPLOY_MODE"
-  DEPLOY_MODE="$DEPLOY_MODE" bash "$FRONTEND_DOWN"
-fi
+_teardown_remote
