@@ -103,6 +103,7 @@ _prompt_defaults_check() {
   printf '    Database: %s\n' "$_db_label"
   printf '    Search:   Postgres ILIKE trigram  (no Typesense)\n'
   printf '    Fulltext: Disabled  (instead see ILIKE trigram above)\n'
+  printf '    Seed:     Use existing (if 4M orders present)\n'
   printf '\nContinue with defaults? [Y/n]: '
   read -r _DFLT
   case "${_DFLT:-Y}" in
@@ -1269,6 +1270,10 @@ _seed_db() {
   _expected_orders=$([[ "$DEPLOY_MODE" == "lite" ]] && printf '100000' || printf '4000000')
   local _min_orders=$(( _expected_orders * 99 / 100 ))
   if [[ "${_DB_ORDERS:-0}" -ge "$_min_orders" ]]; then
+    if (( _SKIP_DEFAULTS >= 1 )); then
+      printf 'DB: %s orders already present. Using existing seed (defaults).\n' "$_DB_ORDERS"
+      return 0
+    fi
     printf 'DB: %s orders already present. Use existing seed? [Y/n]: ' "$_DB_ORDERS"
     read -r _use_existing
     if [[ "${_use_existing:-Y}" =~ ^[Nn] ]]; then
