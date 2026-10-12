@@ -62,8 +62,8 @@ public class OrderService {
         }
 
         var params = new MapSqlParameterSource();
-        String ctePrefix = buildSearchCte(q, params);
-        var where = buildWhere(q, status, regionCode, from, to, minTotal, maxTotal, params);
+        String ctePrefix = OrderSqlBuilder.buildSearchCte(q, params);
+        var where = OrderSqlBuilder.buildWhere(fulltextEnabled, q, status, regionCode, from, to, minTotal, maxTotal, params);
 
         long rawTotal = exactCount(q, status, regionCode, from, to, minTotal, maxTotal);
         boolean approximate = rawTotal == COUNT_SENTINEL;
@@ -91,7 +91,7 @@ public class OrderService {
         if (useReverseScan) {
             limit = (int) (total - (long) (totalPages - 1) * pageSize);
             offset = 0;
-            effectiveOrderBy = flipOrderByDirection(orderBy);
+            effectiveOrderBy = OrderSqlBuilder.flipOrderByDirection(orderBy);
         }
 
         String dataSql = ctePrefix + """
@@ -134,7 +134,7 @@ public class OrderService {
         pageSize = Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE);
 
         var params = new MapSqlParameterSource();
-        var where = buildWhere(q, status, regionCode, from, to, minTotal, maxTotal, params);
+        var where = OrderSqlBuilder.buildWhere(fulltextEnabled, q, status, regionCode, from, to, minTotal, maxTotal, params);
 
         boolean needsRegionJoin = regionCode != null && !regionCode.isBlank();
         String regionJoin = needsRegionJoin ? "JOIN regions r ON r.id = o.\"regionId\" " : "";
@@ -208,10 +208,6 @@ public class OrderService {
         return new OrderListResult(data, page, pageSize, total, totalPages, approximate);
     }
 
-    private String flipOrderByDirection(String orderBy) {
-        return orderBy.replace(" DESC", "  ").replace(" ASC", " DESC").replace("  ", " ASC");
-    }
-
     /**
      * Exact distinct order count for the given filters — the same path
      * listOrders uses for its own total, so /api/aggregates's grand total
@@ -241,10 +237,10 @@ public class OrderService {
                             String from, String to,
                             BigDecimal minTotal, BigDecimal maxTotal) {
         var params = new MapSqlParameterSource();
-        var where = buildWhere(q, status, regionCode, from, to, minTotal, maxTotal, params);
+        var where = OrderSqlBuilder.buildWhere(fulltextEnabled, q, status, regionCode, from, to, minTotal, maxTotal, params);
         boolean needsRegionJoin = regionCode != null && !regionCode.isBlank();
         String regionJoin = needsRegionJoin ? "JOIN regions r ON r.id = o.\"regionId\" " : "";
-        String cacheKey = buildCountCacheKey(q, status, regionCode, from, to, minTotal, maxTotal);
+        String cacheKey = OrderSqlBuilder.buildCountCacheKey(q, status, regionCode, from, to, minTotal, maxTotal);
 
         if (hasShortToken(q)) {
             // Check cache first — a prior /count call may have written the exact value
@@ -283,11 +279,11 @@ public class OrderService {
                                     String from, String to,
                                     BigDecimal minTotal, BigDecimal maxTotal) {
         var params = new MapSqlParameterSource();
-        var where = buildWhere(q, status, regionCode, from, to, minTotal, maxTotal, params);
+        var where = OrderSqlBuilder.buildWhere(fulltextEnabled, q, status, regionCode, from, to, minTotal, maxTotal, params);
         boolean needsRegionJoin = regionCode != null && !regionCode.isBlank();
         String regionJoin = needsRegionJoin ? "JOIN regions r ON r.id = o.\"regionId\" " : "";
         String countSql = "SELECT COUNT(*) FROM orders o " + regionJoin + where;
-        String cacheKey = buildCountCacheKey(q, status, regionCode, from, to, minTotal, maxTotal);
+        String cacheKey = OrderSqlBuilder.buildCountCacheKey(q, status, regionCode, from, to, minTotal, maxTotal);
         return cachedCount(countSql, params, cacheKey);
     }
 
@@ -401,60 +397,6 @@ public class OrderService {
         return toResult(rows, page, pageSize, total, totalPages, false);
     }
 
-    private String buildSearchCte(String q, MapSqlParameterSource params) {
-        return ""; // search_text column handles all search — no CTE needed
-    }
-
-    private String buildWhere(String q, String status, String regionCode,
-                               String from, String to,
-                               BigDecimal minTotal, BigDecimal maxTotal,
-                               MapSqlParameterSource params) {
-        List<String> clauses = new ArrayList<>();
-
-        if (q != null && !q.isBlank()) {
-            if (fulltextEnabled) {
-                clauses.add("o.search_tsv @@ websearch_to_tsquery('simple', :q)");
-                params.addValue("q", q.strip());
-            } else {
-                String[] tokens = q.strip().split("\\s+");
-                for (int i = 0; i < tokens.length; i++) {
-                    String key = "q" + i;
-                    clauses.add("o.search_text ILIKE :" + key);
-                    params.addValue(key, "%" + tokens[i] + "%");
-                }
-            }
-        }
-        if (status != null && !status.isBlank()) {
-            List<String> statuses = Arrays.stream(status.split(","))
-                    .map(String::strip).filter(s -> !s.isEmpty()).toList();
-            clauses.add("o.status = ANY(ARRAY[" +
-                    statuses.stream().map(s -> "'" + s + "'::\"OrderStatus\"").collect(Collectors.joining(",")) + "])");
-        }
-        if (regionCode != null && !regionCode.isBlank()) {
-            List<String> codes = Arrays.stream(regionCode.split(","))
-                    .map(String::strip).filter(s -> !s.isEmpty()).toList();
-            clauses.add("r.code = ANY(ARRAY[" +
-                    codes.stream().map(c -> "'" + c + "'").collect(Collectors.joining(",")) + "])");
-        }
-        if (from != null && !from.isBlank()) {
-            clauses.add("o.\"placedAt\" >= :from::timestamptz");
-            params.addValue("from", from);
-        }
-        if (to != null && !to.isBlank()) {
-            clauses.add("o.\"placedAt\" <= (:to::date + interval '1 day' - interval '1 second')");
-            params.addValue("to", to);
-        }
-        if (minTotal != null) {
-            clauses.add("o.total >= :minTotal");
-            params.addValue("minTotal", minTotal);
-        }
-        if (maxTotal != null) {
-            clauses.add("o.total <= :maxTotal");
-            params.addValue("maxTotal", maxTotal);
-        }
-        return clauses.isEmpty() ? "" : "WHERE " + String.join(" AND ", clauses);
-    }
-
     private Map<Integer, List<OrderItemDTO>> fetchItems(List<Integer> orderIds) {
         if (orderIds.isEmpty()) return Map.of();
         String sql = """
@@ -508,15 +450,4 @@ public class OrderService {
         return total;
     }
 
-    private String buildCountCacheKey(String q, String status, String regionCode,
-                                      String from, String to,
-                                      BigDecimal minTotal, BigDecimal maxTotal) {
-        return "q=" + (q != null ? q.strip().toLowerCase() : "") +
-               "&status=" + (status != null ? status : "") +
-               "&regionCode=" + (regionCode != null ? regionCode : "") +
-               "&from=" + (from != null ? from : "") +
-               "&to=" + (to != null ? to : "") +
-               "&minTotal=" + (minTotal != null ? minTotal.toPlainString() : "") +
-               "&maxTotal=" + (maxTotal != null ? maxTotal.toPlainString() : "");
-    }
 }
