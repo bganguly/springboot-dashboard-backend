@@ -88,13 +88,21 @@ _run_preflight() {
 # ── Defaults check ────────────────────────────────────────────────────────────
 
 _prompt_defaults_check() {
+  local _db_label
+  local _saved_neon
+  _saved_neon=$(grep -E '^USE_NEON=' "$ROOT_DIR/.env.gcp.full" 2>/dev/null | cut -d= -f2- | tr -d '"' || true)
+  if [[ "$_saved_neon" == "true" ]]; then
+    _db_label="Neon serverless Postgres (using saved creds)"
+  else
+    _db_label="Neon serverless Postgres (free tier, prompted next)"
+  fi
   printf '\n=== springboot-dashboard-backend-gcp deploy ===\n\n'
   printf '  Defaults:\n'
   printf '    Target:   Full remote (GCP, 4M-row dataset)\n'
   printf '    Backend:  Cloud Run  (serverless, scales to zero)\n'
-  printf '    Database: Neon serverless Postgres (free tier, prompted next)\n'
+  printf '    Database: %s\n' "$_db_label"
   printf '    Search:   Postgres ILIKE trigram  (no Typesense)\n'
-  printf '    Fulltext: Disabled  (ILIKE trigram)\n'
+  printf '    Fulltext: Disabled\n'
   printf '\nContinue with defaults? [Y/n]: '
   read -r _DFLT
   case "${_DFLT:-Y}" in
