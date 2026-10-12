@@ -102,7 +102,7 @@ _prompt_defaults_check() {
   printf '    Backend:  Cloud Run  (serverless, scales to zero)\n'
   printf '    Database: %s\n' "$_db_label"
   printf '    Search:   Postgres ILIKE trigram  (no Typesense)\n'
-  printf '    Fulltext: Disabled\n'
+  printf '    Fulltext: Disabled  (instead see ILIKE trigram above)\n'
   printf '\nContinue with defaults? [Y/n]: '
   read -r _DFLT
   case "${_DFLT:-Y}" in
