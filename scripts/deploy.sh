@@ -9,6 +9,7 @@ _STEP="startup"
 _on_exit() { local c=$?; [[ $c -ne 0 ]] && printf '\n[deploy.sh] ABORTED (exit %d) at step: %s\n' "$c" "$_STEP" >&2; }
 trap _on_exit EXIT
 
+_SKIP_DEFAULTS=0
 _TARGET=""
 DEPLOY_MODE=""
 DEPLOY_MODE_PREFIX=""
@@ -84,6 +85,25 @@ _run_preflight() {
   fi
 }
 
+# ── Defaults check ────────────────────────────────────────────────────────────
+
+_prompt_defaults_check() {
+  printf '\n=== springboot-dashboard-backend-gcp deploy ===\n\n'
+  printf '  Defaults:\n'
+  printf '    Target:   Full remote (GCP, 4M-row dataset)\n'
+  printf '    Backend:  Cloud Run  (serverless, scales to zero)\n'
+  printf '    Database: Neon serverless Postgres (free tier, prompted next)\n'
+  printf '    Search:   Postgres ILIKE trigram  (no Typesense)\n'
+  printf '    Fulltext: Disabled  (ILIKE trigram)\n'
+  printf '\nContinue with defaults? [Y/n]: '
+  read -r _DFLT
+  case "${_DFLT:-Y}" in
+    [Nn]*) _SKIP_DEFAULTS=0 ;;
+    *)     _SKIP_DEFAULTS=1; _TARGET="remote"; DEPLOY_MODE="full"; BACKEND_RUNTIME="cr"
+           USE_TYPESENSE="false"; USE_FULLTEXT="false" ;;
+  esac
+}
+
 # ── Menu ──────────────────────────────────────────────────────────────────────
 
 _prompt_menu() {
@@ -97,7 +117,6 @@ _prompt_menu() {
   printf '  [3] Full   — GCP: 4M-row dataset  · Cloud Run backend · Neon or GCE Postgres'
   (( _full_count > 0 )) && printf ' [%s resources active]' "$_full_count" || printf ' [not deployed]'
   printf '\n'
-  printf '               Neon recommended for DB (~$0/mo free tier, prompted after selection).\n'
   printf '\nChoice [1/2/3, default 3]: '
   read -r _MODE
   case "${_MODE:-3}" in
@@ -1815,7 +1834,7 @@ PYEOF
 _deploy_frontend_inline() {
   local fe_deploy="${ROOT_DIR}/../dashboard-frontend/scripts/deploy.sh"
   [[ -f "$fe_deploy" ]] || return 0
-  printf '\nContinue with inline frontend deployment? [y/N]: '
+  printf '\nDeploy frontend (java-implementations/dashboard-frontend)? [y/N]: '
   read -r _FE_CONTINUE
   case "${_FE_CONTINUE:-N}" in
     [Yy]*) ;;
@@ -2014,11 +2033,18 @@ _deploy_remote() {
 # ══════════════════════════════════════════════════════════════════════════════
 
 _run_preflight
-_prompt_menu
-_prompt_backend_runtime
-_prompt_database_backend
-_prompt_typesense
-_prompt_fulltext
+_prompt_defaults_check
+
+if (( _SKIP_DEFAULTS )); then
+  _prompt_database_backend
+else
+  _prompt_menu
+  _prompt_backend_runtime
+  _prompt_database_backend
+  _prompt_typesense
+  _prompt_fulltext
+fi
+
 _save_user_inputs
 _print_cost_summary
 
