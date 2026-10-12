@@ -1,2 +1,4 @@
 node_modules/
 bin/
+Pulumi.full.yaml
+Pulumi.lite.yaml

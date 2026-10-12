@@ -2,7 +2,7 @@
 .env.local
 .env.gcp
 .env.gcp.*
-.typesense-creds
+.typesense-creds*
 build/
 .gradle/
 *.class
@@ -12,5 +12,6 @@ infra/.terraform/
 *.tfvars
 !*.tfvars.example
 *.dump
+*.log
 .next/
 node_modules/
