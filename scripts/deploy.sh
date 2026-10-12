@@ -108,7 +108,13 @@ _prompt_defaults_check() {
   case "${_DFLT:-Y}" in
     [Nn]*) _SKIP_DEFAULTS=0 ;;
     *)     _SKIP_DEFAULTS=1; _TARGET="remote"; DEPLOY_MODE="full"; BACKEND_RUNTIME="cr"
-           USE_TYPESENSE="false"; USE_FULLTEXT="false" ;;
+           USE_TYPESENSE="false"; USE_FULLTEXT="false"
+           if [[ "$_saved_neon" == "true" ]]; then
+             USE_NEON=$(grep -E '^USE_NEON=' "$ROOT_DIR/.env.gcp.full" 2>/dev/null | cut -d= -f2- | tr -d '"' || true)
+             NEON_DATABASE_URL=$(grep -E '^NEON_DATABASE_URL=' "$ROOT_DIR/.env.gcp.full" 2>/dev/null | cut -d= -f2- | tr -d '"' || true)
+             _SKIP_DEFAULTS=2
+           fi
+           ;;
   esac
 }
 
@@ -2043,7 +2049,9 @@ _deploy_remote() {
 _run_preflight
 _prompt_defaults_check
 
-if (( _SKIP_DEFAULTS )); then
+if (( _SKIP_DEFAULTS == 2 )); then
+  :
+elif (( _SKIP_DEFAULTS == 1 )); then
   _prompt_database_backend
 else
   _prompt_menu
