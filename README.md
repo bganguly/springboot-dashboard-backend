@@ -35,11 +35,11 @@ Open the **API Explorer** to run live requests against every endpoint from the b
 
 ### Search & chart request flow — step by step
 
-1. **Browser → Nginx frontend** — the React UI sends `GET /api/orders?q=sara` to the Cloud Run frontend service (Nginx on port 80), which proxies the `/api/*` path upstream to the Spring Boot backend over HTTPS with SNI.
+1. **Browser → Nginx frontend** — the Next.js UI sends `GET /api/orders?q=sara` to the Cloud Run frontend service (Nginx on port 80), which proxies the `/api/*` path upstream to the Spring Boot backend over HTTPS with SNI.
 2. **Spring Boot → search** — if a Typesense cluster is reachable, `TypesenseService` handles the query (sub-5ms); otherwise Spring Boot falls back automatically to `SELECT * FROM orders WHERE search_text ILIKE '%sara%'` against the GCE Postgres VM via the GIN index. The active search backend is visible as a badge in the UI (`search · typesense` / `search · postgres`).
 3. **Chart path** — `GET /api/aggregates` is served entirely from pre-aggregated `daily_summary` and related rollup tables; Spring Boot never touches raw `orders` on the chart path.
 4. **Secret injection** — Spring Boot reads `DATABASE_URL` from GCP Secret Manager at container start via `secretKeyRef`; no credentials are stored in the image or env files.
-5. **Results → browser** — Spring Boot returns paginated JSON; the React frontend renders the orders table and Recharts chart.
+5. **Results → browser** — Spring Boot returns paginated JSON; the Next.js frontend renders the orders table and Recharts chart.
 
 ```mermaid
 sequenceDiagram
