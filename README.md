@@ -11,7 +11,7 @@ container images stored in Artifact Registry (analogous to ECR + ECS/EKS in AWS 
 
 | Endpoint | URL |
 |---|---|
-| **API Explorer** | https://dash-nextjs-full-frontend-77y7e2wykq-uc.a.run.app/api-explorer (sample) |
+| **API Explorer** | https://dash-nextjs-full-frontend-77y7e2wykq-uc.a.run.app/api-explorer |
 | **Dashboard** | https://dash-nextjs-full-frontend-77y7e2wykq-uc.a.run.app/ |
 | **Portfolio demo** | https://bganguly.github.io/#orders_dashboard |
 
