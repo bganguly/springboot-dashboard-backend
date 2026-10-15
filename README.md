@@ -21,7 +21,7 @@ container images stored in Artifact Registry (analogous to ECR + ECS/EKS in AWS 
 
 ## Using the App
 
-Open **`/explorer.html`** on the running backend to run live requests against every endpoint from the browser — no curl required.
+Open the **API Explorer** to run live requests against every endpoint from the browser.
 
 1. **List orders** — `GET /api/orders` returns a paginated, date-sorted list of orders; response header shows total row count and query time.
 2. **Full-text search** — `GET /api/orders?q=<term>` hits the GIN pg_bigm index; enter at least 2 characters and observe sub-second response times on 4 M+ rows.
