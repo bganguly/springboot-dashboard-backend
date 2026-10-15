@@ -220,16 +220,3 @@ To manually trigger a restore:
 
 The snapshot contains 4 M+ orders across multiple customers, regions, and statuses — sized for realistic query performance testing without needing to generate synthetic data.
 
----
-
-## Live Service
-
-API Explorer: exposed via each frontend's `/api-explorer` route — see frontends below
-
-Dashboard:
-- [angular-dashboard](https://github.com/bganguly/angular-dashboard): [Open App](https://salmon-wave-01f721c0f.6.azurestaticapps.net) · [Open API Explorer](https://dash-angular-frontend-77y7e2wykq-uc.a.run.app/api-explorer?returnTo=angular_dashboard)
-- [dashboard-nextjs](https://github.com/bganguly/dashboard-nextjs): [Open App](https://dash-nextjs-full-frontend-77y7e2wykq-uc.a.run.app/) · [Open API Explorer](https://dash-nextjs-full-frontend-77y7e2wykq-uc.a.run.app/api-explorer)
-- [dashboard-frontend](https://github.com/bganguly/dashboard-frontend): [Open App](https://dash-react-frontend-77y7e2wykq-uc.a.run.app) · [Open API Explorer](https://dash-react-frontend-77y7e2wykq-uc.a.run.app/api-explorer)
-
-Portfolio demo: see each frontend above
-
