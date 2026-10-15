@@ -12,7 +12,7 @@ container images stored in Artifact Registry (analogous to ECR + ECS/EKS in AWS 
 | Endpoint | URL |
 |---|---|
 | **Dashboard (angular-dashboard)** | https://salmon-wave-01f721c0f.6.azurestaticapps.net |
-| **API Explorer (angular-dashboard)** | https://dash-angular-frontend-77y7e2wykq-uc.a.run.app/api-explorer?returnTo=angular_dashboard |
+| **API Explorer (angular-dashboard)** | https://dash-angular-frontend-77y7e2wykq-uc.a.run.app/api-explorer?returnTo=https://bganguly.github.io/#angular_dashboard |
 | **Dashboard (dashboard-nextjs)** | https://dash-nextjs-full-frontend-77y7e2wykq-uc.a.run.app/ |
 | **API Explorer (dashboard-nextjs)** | https://dash-nextjs-full-frontend-77y7e2wykq-uc.a.run.app/api-explorer |
 | **Dashboard (dashboard-frontend)** | https://dash-react-frontend-77y7e2wykq-uc.a.run.app |
