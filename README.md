@@ -13,7 +13,7 @@ container images stored in Artifact Registry (analogous to ECR + ECS/EKS in AWS 
 |---|---|
 | **API Explorer** | https://dash-nextjs-full-frontend-77y7e2wykq-uc.a.run.app/api-explorer |
 | **Dashboard** | https://dash-nextjs-full-frontend-77y7e2wykq-uc.a.run.app/ |
-| **Portfolio demo** | https://bganguly.github.io/#orders_dashboard (one of several UIs that use this backend) |
+| **Portfolio demo** | https://bganguly.github.io/#nextjs_springboot (one of several UIs that use this backend) |
 
 > Cloud Run scales to zero when idle; the first request after a period of inactivity may have a slight delay.
 
