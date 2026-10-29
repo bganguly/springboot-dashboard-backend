@@ -61,6 +61,7 @@ _deploy_remote() {
   _check_db_row_count
   _seed_db
   [[ "$USE_NEON" == "true" ]] && _neon_premigrate_heavy
+  [[ "$USE_NEON" == "true" && "${_DB_ORDERS:-0}" -gt 0 ]] && _backfill_daily_summary
   [[ "$USE_NEON" == "true" && "${_DB_ORDERS:-0}" -gt 0 ]] && _save_snapshot_to_gcs
   _sync_daily_order_count
   _seed_typesense

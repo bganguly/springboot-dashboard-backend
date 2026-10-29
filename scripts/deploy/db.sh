@@ -607,12 +607,16 @@ _flyway_repair_neon() {
 _neon_premigrate_heavy() {
   [[ "$USE_NEON" != "true" || -z "${NEON_DATABASE_URL:-}" ]] && return 0
 
-  local v9_done v10_done
+  local v9_done v10_done ocf_count
   v9_done=$(psql "$NEON_DATABASE_URL" -Atqc \
     "SELECT count(*) FROM flyway_schema_history WHERE version = '9' AND success = true;" 2>/dev/null | tr -d ' \n' || printf '0')
   v10_done=$(psql "$NEON_DATABASE_URL" -Atqc \
     "SELECT count(*) FROM flyway_schema_history WHERE version = '10' AND success = true;" 2>/dev/null | tr -d ' \n' || printf '0')
-  [[ "$v9_done" == "1" && "$v10_done" == "1" ]] && return 0
+  ocf_count=$(psql "$NEON_DATABASE_URL" -Atqc \
+    "SELECT count(*) FROM order_category_facts LIMIT 1;" 2>/dev/null | tr -d ' \n' || printf '0')
+  [[ "$v9_done" == "1" && "$v10_done" == "1" && "$ocf_count" -gt 0 ]] && return 0
+  [[ "$v9_done" == "1" && "$v10_done" == "1" && "$ocf_count" == "0" ]] && \
+    printf '  WARNING: V9 marked done in Flyway history but order_category_facts is empty — re-running V9 backfill.\n'
 
   printf '\n  WARNING: V9/V10 migrations not yet applied.\n'
   printf '  This will run heavy psql backfills directly against Neon before deploying.\n'
@@ -710,6 +714,33 @@ WHERE NOT EXISTS (SELECT 1 FROM flyway_schema_history WHERE version = '9');" \
       || { printf '    V10 history record insert failed\n'; return 1; }
     printf '  V10 pre-migration complete.\n'
   fi
+}
+
+_backfill_daily_summary() {
+  [[ "$USE_NEON" != "true" || -z "${NEON_DATABASE_URL:-}" ]] && return 0
+
+  local ds_count
+  ds_count=$(psql "$NEON_DATABASE_URL" -Atqc \
+    "SELECT count(*) FROM daily_summary LIMIT 1;" 2>/dev/null | tr -d ' \n' || printf '0')
+  [[ "$ds_count" -gt 100 ]] && return 0
+
+  local ocf_count
+  ocf_count=$(psql "$NEON_DATABASE_URL" -Atqc \
+    "SELECT count(*) FROM order_category_facts LIMIT 1;" 2>/dev/null | tr -d ' \n' || printf '0')
+  if [[ "$ocf_count" -eq 0 ]]; then
+    printf '  daily_summary backfill: order_category_facts is empty — run _neon_premigrate_heavy first.\n'
+    return 1
+  fi
+
+  local direct_url
+  direct_url=$(printf '%s' "$NEON_DATABASE_URL" \
+    | sed 's/-pooler\././' \
+    | sed 's/[&?]channel_binding=[^&]*//')
+
+  printf '  Backfilling daily_summary from order_category_facts (%s ocf rows)...\n' "$ocf_count"
+  psql "$direct_url" -c "SET statement_timeout = 0; SET idle_in_transaction_session_timeout = 0; TRUNCATE daily_summary; INSERT INTO daily_summary (date, \"categoryId\", \"categoryName\", \"regionId\", \"regionCode\", \"totalOrders\", \"totalRevenue\", \"totalItems\", \"avgOrderValue\", \"createdAt\", \"updatedAt\") SELECT f.date, f.\"categoryId\", f.\"categoryName\", f.\"regionId\", f.\"regionCode\", COUNT(DISTINCT f.\"orderId\")::int, COALESCE(SUM(f.\"totalRevenue\"), 0), COALESCE(SUM(f.\"totalItems\"), 0)::int, CASE WHEN COUNT(DISTINCT f.\"orderId\") > 0 THEN COALESCE(SUM(f.\"totalRevenue\"), 0) / COUNT(DISTINCT f.\"orderId\") ELSE 0 END, now(), now() FROM order_category_facts f GROUP BY f.date, f.\"categoryId\", f.\"categoryName\", f.\"regionId\", f.\"regionCode\" ORDER BY f.date;" \
+    || { printf '  daily_summary backfill FAILED\n'; return 1; }
+  printf '  daily_summary backfill complete.\n'
 }
 
 _dump_neon_to_gcs() {
