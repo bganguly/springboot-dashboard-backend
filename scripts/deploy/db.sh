@@ -641,7 +641,7 @@ _neon_premigrate_heavy() {
   fi
   printf '  Using direct Neon URL (bypasses PgBouncer TCP timeout)\n'
 
-  if [[ "$v9_done" != "1" ]]; then
+  if [[ "$v9_done" != "1" || "$ocf_count" == "0" ]]; then
     printf '  Pre-migrating V9 (batched backfill — 400K orders per batch)...\n'
     local t0 t1 max_id batch_size batch_start batch_end batch_num total_batches
     batch_size=400000
