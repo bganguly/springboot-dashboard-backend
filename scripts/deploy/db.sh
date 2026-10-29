@@ -687,18 +687,21 @@ _neon_premigrate_heavy() {
       || { printf '    FAILED\n'; return 1; }
     t1=$(date +%s); printf '    done (%ds)\n' $(( t1 - t0 ))
 
-    local v9_checksum
-    v9_checksum=$(python3 -c "
+    if [[ "$v9_done" != "1" ]]; then
+      local v9_checksum
+      v9_checksum=$(python3 -c "
 import binascii, ctypes
 data = open('${ROOT_DIR}/src/main/resources/db/migration/V9__backfill_summary_tables.sql', 'rb').read()
 print(ctypes.c_int32(binascii.crc32(data)).value)
 " 2>/dev/null) || v9_checksum=-1898932707
-    psql "$NEON_DATABASE_URL" -c "
+      psql "$NEON_DATABASE_URL" -c "
 INSERT INTO flyway_schema_history (installed_rank, version, description, type, script, checksum, installed_by, installed_on, execution_time, success)
 SELECT COALESCE(MAX(installed_rank), 0) + 1, '9', 'backfill summary tables', 'SQL', 'V9__backfill_summary_tables.sql', ${v9_checksum}, 'neondb_owner', now(), 0, true
 FROM flyway_schema_history
-WHERE NOT EXISTS (SELECT 1 FROM flyway_schema_history WHERE version = '9');" \
-      || { printf '    V9 history record insert failed\n'; return 1; }
+WHERE NOT EXISTS (SELECT 1 FROM flyway_schema_history WHERE version = '9')
+ON CONFLICT (installed_rank) DO NOTHING;" \
+        || { printf '    V9 history record insert failed\n'; return 1; }
+    fi
     printf '  V9 pre-migration complete.\n'
   fi
 
