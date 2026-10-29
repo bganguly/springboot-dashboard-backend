@@ -28,7 +28,6 @@ _CP=0
 _CF=0
 _IMG_EXISTED=0
 _local_running=0
-_lite_count=0
 _full_count=0
 DEMO_SNAPSHOT_GCS_URI=""
 BAKE_VM_NAME=""

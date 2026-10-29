@@ -41,18 +41,14 @@ _prompt_menu() {
   printf '  [1] Local  — Spring Boot on localhost + local Postgres (no GCP cost)'
   (( _local_running )) && printf ' [running]' || printf ' [not detected]'
   printf '\n'
-  printf '  [2] Lite   — GCP: 100k-row dataset · Cloud Run backend · Neon or GCE Postgres'
-  (( _lite_count > 0 )) && printf ' [%s resources active]' "$_lite_count" || printf ' [not deployed]'
-  printf '\n'
-  printf '  [3] Full   — GCP: 4M-row dataset  · Cloud Run backend · Neon or GCE Postgres'
+  printf '  [2] Full   — GCP: 4M-row dataset  · Cloud Run backend · Neon or GCE Postgres'
   (( _full_count > 0 )) && printf ' [%s resources active]' "$_full_count" || printf ' [not deployed]'
   printf '\n'
-  printf '\nChoice [1/2/3, default 3]: '
+  printf '\nChoice [1/2, default 2]: '
   read -r _MODE
-  case "${_MODE:-3}" in
-    2) _TARGET="remote"; DEPLOY_MODE="lite" ;;
-    3) _TARGET="remote"; DEPLOY_MODE="full" ;;
-    *) _TARGET="local";  DEPLOY_MODE=""    ;;
+  case "${_MODE:-2}" in
+    1) _TARGET="local";  DEPLOY_MODE=""    ;;
+    *) _TARGET="remote"; DEPLOY_MODE="full" ;;
   esac
 }
 
