@@ -50,7 +50,7 @@ public class AggregateService {
         List<Map<String, Object>> rows;
 
         if (!hasQ && !hasStatus && !hasRegion && !hasTotal) {
-            rows = queryDailySummary(from, to, regionCode);
+            return buildResultPreBucketed(queryDailySummaryBucketed(from, to, regionCode, topCategories != null ? topCategories : 5));
         } else if (hasQ && isMultiToken && !hasTotal) {
             rows = queryMultiTokenViaCte(from, to, q, status, regionCode);
             if (rows.isEmpty()) rows = queryViaSearchText(from, to, q, status, regionCode, null, null);
@@ -67,18 +67,53 @@ public class AggregateService {
         return buildResult(rows, topCategories != null ? topCategories : 5);
     }
 
-    private List<Map<String, Object>> queryDailySummary(String from, String to, String regionCode) {
+    private List<Map<String, Object>> queryDailySummaryBucketed(
+            String from, String to, String regionCode, int topN) {
+        String regionFilter = (regionCode != null && !regionCode.isBlank())
+                ? " AND \"regionCode\" = ANY(ARRAY[" + quoteList(regionCode) + "])" : "";
         var params = new MapSqlParameterSource()
-                .addValue("from", from).addValue("to", to);
-        String where = "WHERE date BETWEEN :from::date AND :to::date";
-        if (regionCode != null && !regionCode.isBlank()) {
-            where += " AND \"regionCode\" = ANY(ARRAY[" + quoteList(regionCode) + "])";
-        }
+                .addValue("from", from).addValue("to", to).addValue("topN", topN);
         return jdbc.queryForList(
-                "SELECT date::text AS day, \"categoryName\" AS category, " +
-                "SUM(\"totalOrders\") AS total_orders, SUM(\"totalRevenue\") AS total_revenue, " +
-                "SUM(\"totalItems\") AS total_items FROM daily_summary " + where +
-                " GROUP BY date, \"categoryName\" ORDER BY date", params);
+                "WITH top_cats AS (" +
+                "  SELECT \"categoryName\" FROM daily_summary" +
+                "  WHERE date BETWEEN :from::date AND :to::date" + regionFilter +
+                "  GROUP BY \"categoryName\" ORDER BY SUM(\"totalOrders\") DESC LIMIT :topN" +
+                ") " +
+                "SELECT date::text AS day," +
+                "  CASE WHEN \"categoryName\" IN (SELECT \"categoryName\" FROM top_cats)" +
+                "       THEN \"categoryName\" ELSE 'Others' END AS category," +
+                "  SUM(\"totalOrders\") AS total_orders, SUM(\"totalRevenue\") AS total_revenue," +
+                "  SUM(\"totalItems\") AS total_items" +
+                " FROM daily_summary" +
+                " WHERE date BETWEEN :from::date AND :to::date" + regionFilter +
+                " GROUP BY date," +
+                "  CASE WHEN \"categoryName\" IN (SELECT \"categoryName\" FROM top_cats)" +
+                "       THEN \"categoryName\" ELSE 'Others' END" +
+                " ORDER BY date",
+                params);
+    }
+
+    private List<DailyAggregateDTO> buildResultPreBucketed(List<Map<String, Object>> rows) {
+        LinkedHashMap<String, LinkedHashMap<String, DailyAggregateDTO.CategoryAggregateDTO>> byDay = new LinkedHashMap<>();
+        for (var row : rows) {
+            String day = (String) row.get("day");
+            String cat = (String) row.get("category");
+            long orders = toLong(row.get("total_orders"));
+            double revenue = toDouble(row.get("total_revenue"));
+            long items = toLong(row.get("total_items"));
+            byDay.computeIfAbsent(day, k -> new LinkedHashMap<>())
+                 .put(cat, new DailyAggregateDTO.CategoryAggregateDTO(
+                         orders, revenue, items, orders > 0 ? revenue / orders : 0));
+        }
+        List<DailyAggregateDTO> result = new ArrayList<>();
+        for (var entry : byDay.entrySet()) {
+            var cats = entry.getValue();
+            var othersEntry = cats.remove("Others");
+            var ordered = new LinkedHashMap<>(cats);
+            if (othersEntry != null) ordered.put("Others", othersEntry);
+            result.add(new DailyAggregateDTO(entry.getKey(), ordered));
+        }
+        return result;
     }
 
     private List<Map<String, Object>> queryStatusCategorySummary(String from, String to, String status) {
