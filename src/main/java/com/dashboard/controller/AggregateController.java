@@ -1,6 +1,7 @@
 package com.dashboard.controller;
 
 import com.dashboard.service.AggregateService;
+import com.dashboard.service.AggregatesCache;
 import com.dashboard.service.OrderService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -18,6 +19,7 @@ import java.util.concurrent.Executor;
 public class AggregateController {
 
     private final AggregateService aggregateService;
+    private final AggregatesCache aggregatesCache;
     private final Executor virtualThreadExecutor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
 
     @GetMapping
@@ -32,6 +34,17 @@ public class AggregateController {
             @RequestParam(required = false) Integer topCategories,
             @RequestParam(defaultValue = "true") boolean includeData,
             @RequestParam(defaultValue = "true") boolean includeTotal) {
+
+        boolean noFilters = (q == null || q.isBlank())
+                && (status == null || status.isBlank())
+                && (regionCode == null || regionCode.isBlank())
+                && minTotal == null && maxTotal == null;
+        int topN = topCategories != null ? topCategories : 5;
+
+        if (noFilters && includeData && includeTotal) {
+            var cached = aggregatesCache.get(AggregatesCache.key(from, to, topN));
+            if (cached.isPresent()) return ResponseEntity.ok(cached.get());
+        }
 
         CompletableFuture<?> dataFuture = includeData
                 ? CompletableFuture.supplyAsync(
@@ -54,6 +67,11 @@ public class AggregateController {
             body.put("totalOrders", OrderService.adjustCount(raw));
             body.put("totalOrdersApproximate", OrderService.isApproximateCount(raw));
         }
+
+        if (noFilters && includeData && includeTotal) {
+            aggregatesCache.put(AggregatesCache.key(from, to, topN), body);
+        }
+
         return ResponseEntity.ok(body);
     }
 }
